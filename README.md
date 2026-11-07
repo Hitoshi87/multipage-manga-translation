@@ -65,7 +65,7 @@ Ghi chú Apple Silicon:
 
 - CoreML được dùng cho `balloon`, `ctd`, `head`; các model còn lại chạy CPU. Không cần cấu hình thêm.
 - **Lần chạy đầu chậm hơn**: CoreML biên dịch model và lưu cache tại `~/Library/Caches/MangaTypesetterLite/CoreML`. Các lần sau dùng lại cache.
-- Chạy cả chương dài (30–100 trang) trên máy ít RAM/MacBook Air: chuyển **Tăng tốc → CPU** nếu máy nóng hoặc chậm dần.
+- Dùng **Tăng tốc → Tự động** (mặc định). `CPU` chỉ là phương án dự phòng nếu CoreML lỗi hoặc máy nóng/chậm dần khi chạy chương dài; đây là giả thuyết chưa được đo.
 - Muốn dùng công cụ preview thử nghiệm (Comic Text Mask, AOT): `.venv/bin/python scripts/setup_preview_models.py`.
 - Lần đầu Photoshop có thể hỏi quyền cho script chạy Python; hãy cho phép.
 
@@ -156,11 +156,11 @@ Dropdown **Tăng tốc** (tab Nguồn & nhận diện) được lưu cho các ph
 | Chế độ | Hành vi |
 | --- | --- |
 | `auto` | Tự nhận OS/thiết bị. macOS ARM64: CoreML cho `balloon`, `ctd`, `head`. Có `onnxruntime-gpu`: CUDA. Còn lại: CPU |
-| `cpu` | Chạy hoàn toàn trên CPU. Ổn định, mát máy; nên dùng cho chương dài trên Mac ít RAM |
+| `cpu` | Chạy hoàn toàn trên CPU. Phương án dự phòng khi CoreML/CUDA lỗi hoặc máy nóng; thường chậm hơn |
 | `coreml` | Như `auto` trên Mac nhưng ép dùng CoreML cho các model đã kiểm chứng; model khác vẫn chạy CPU |
 | `cuda` | Ép CUDA cho ONNX và PyTorch; fallback CPU khi lỗi |
 
-Hướng dẫn chọn nhanh: Mac dùng `auto`; Mac nóng/chậm dần khi batch dùng `cpu`; PC NVIDIA dùng `auto` hoặc `cuda`. Không có số liệu nào bảo đảm từng node thật sự chạy trên GPU/ANE; xem `hardware` trong `trace.json` để biết provider đã đăng ký và fallback.
+Hướng dẫn chọn nhanh: Mac và PC NVIDIA dùng `auto`. Chỉ chuyển `cpu` khi gặp lỗi thiết bị hoặc máy bị throttling; chưa có số đo chính thức so sánh `auto` với `cpu` trên M4. Không có số liệu nào bảo đảm từng node thật sự chạy trên GPU/ANE; xem `hardware` trong `trace.json` để biết provider đã đăng ký và fallback.
 
 Batch nhiều trang: script tự gọi `app.purge(PurgeTarget.ALLCACHES)` sau mỗi trang và dọn `work/jobs/` khi RPC thành công (chỉ giữ log khi lỗi). Chi tiết: [hardware và dispatch](docs/runtime/hardware.md).
 
@@ -183,7 +183,7 @@ Kết quả đã thử trên mẫu truyện thật và Photoshop CMYK; chưa có
 | "Thiếu Python trong .venv" | Tạo `.venv` ở gốc project theo mục 2 hoặc 3 |
 | `doctor` báo thiếu ngôn ngữ OCR | Cài thêm gói Tesseract (đặc biệt `jpn_vert`, `vie`) |
 | Không thấy `CUDAExecutionProvider` | `pip uninstall onnxruntime`, cài lại `onnxruntime-gpu`, kiểm tra CUDA 12/cuDNN 9 |
-| Mac chậm dần khi batch | Đổi Tăng tốc sang `CPU`; đóng bớt ứng dụng nặng |
+| Mac chậm dần khi batch | Đóng bớt ứng dụng nặng; nếu vẫn chậm, thử `CPU` và gửi `trace.json` (mục `hardware`, `seconds`) để so sánh |
 | Lần đầu chạy rất chậm trên Mac | Bình thường: CoreML đang biên dịch cache |
 | "Python không phản hồi trong 180 giây" | Xem `worker.log` trong thư mục job; thử `cpu` |
 | Báo dữ liệu version cũ | Scan lại từ ảnh gốc |

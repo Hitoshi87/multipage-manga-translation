@@ -9,4 +9,4 @@ Chạy `python manga_typesetter.py doctor` để xem `hardware`: OS, architectur
 
 Windows/NVIDIA: cần môi trường `.venv/Scripts/python.exe`, Tesseract trong PATH, gói `onnxruntime-gpu` (thay vì `onnxruntime` CPU) phù hợp driver/CUDA/cuDNN. Xem bảng chính thức https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html. Khi có CUDA, PyTorch (Comic Text Mask, AOT) tự động nhận diện thiết bị `cuda`.
 
-Lưu ý hiệu năng Apple Silicon: Khi chạy chapter dài trên máy Mac (đặc biệt MacBook Air), chip có thể bị thermal throttling hoặc CoreML giữ bộ nhớ đệm UMA; chuyển chế độ Tăng tốc sang `CPU` giúp máy mát và duy trì tốc độ xử lý ổn định qua từng trang.
+Lưu ý hiệu năng Apple Silicon: mặc định `auto` (CoreML cho các model đã kiểm chứng) là cấu hình được thử trên M4. Chế độ `cpu` là dự phòng khi CoreML lỗi hoặc máy nóng; việc CPU ổn định hơn khi chạy chương dài chưa được đo, nên so sánh `seconds` trong `trace.json` giữa hai chế độ trước khi kết luận.
