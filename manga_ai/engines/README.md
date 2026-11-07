@@ -1,0 +1,11 @@
+# Clean engines
+
+The Photoshop dropdown gets its choices from `list_engines`; `run_engine` dispatches a trusted, registered descriptor in `__init__.py`. Each entry declares a stable ID, version, label, Python module and function, required model paths, and whether output requires review.
+
+To add an internal engine, implement `handler(manifest_path, mapping, cancel, preview)` and return `overlay`, `applied`, `skipped` and `blocked`; return mask, trace, skip reason codes and review metadata where available. Register its descriptor and add contract, pixel-mask, selection, error/cancel and Photoshop regression tests. IDs and versions are persisted in job metadata; a version mismatch fails instead of silently falling back. Model readiness currently checks file presence, not model integrity or license.
+
+Baseline stays the default. 1107 is a review-required engine: it produces its overlay but does not assert that regions have been safely cleaned. The 1107 orchestration still uses staged files and stage modules under `manga_ai/engines/stages/`; the old `scripts/` paths are compatibility adapters; it does not discover or install third-party plugins.
+
+Version `1107-shadow-0.4` runs `flat_finish.py` after ownership. It reconstructs a continuous paper field in already-masked, uniquely owned text envelopes. Donors exclude whole text proposals and the mask halo; robust affine RGB fitting has flatness, residual and extrapolation checks. An under-covered detector polygon may use the envelope of ink already processed in each owned proposal, with head, other-region and unknown-ink protection. Disconnected unmasked text gains no authority. A failed background check keeps the previous output. FinishConfig thresholds remain experimental and are recorded with crop transforms, plane coefficients, masks and before/after artifacts. The compositor asserts zero pixel changes outside the final mask; registry and handler versions are tested together.
+
+The top-level `manga_typesetter.py clean` CLI is the legacy Baseline path. Engine 1107 runs through the registry API / JSON RPC (`operation: run_engine`) used by `Photoshop_Typeset.jsx`. Historical cached benchmark scripts are not alternate production entry points and are excluded from the public source bundle.

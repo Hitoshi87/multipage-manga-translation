@@ -1,0 +1,2 @@
+# Optional; base OpenCV/Tesseract environment is unchanged.
+onnxruntime>=1.23.2,<2

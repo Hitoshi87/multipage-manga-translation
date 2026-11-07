@@ -1,0 +1,4 @@
+# Optional preview-only dependencies; normal chapter processing does not require PyTorch.
+onnxruntime>=1.23.2,<2
+torch>=2.5,<3
+safetensors>=0.5,<1

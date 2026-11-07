@@ -1,0 +1,467 @@
+/* Photoshop-only operations; shared by the UI and real Photoshop smoke tests. */
+var MTA = (function () {
+    var serial = 0;
+    var uiVersion = '1107-ui.4';
+    function inputPolicy(engineId, mode) {
+        var legacy = engineId === 'baseline', clean = !mode.alreadyClean;
+        return {legacyTools:legacy && clean, fullPage:legacy && clean,
+                clean:clean && !mode.modelBatch, preview:clean && !mode.modelBatch,
+                typeset:!mode.cleanOnly, review:!mode.modelBatch,
+                skipMismatch:!mode.cleanOnly && !mode.reviewAll && !mode.modelBatch,
+                detail:!!mode.aiDetector};
+    }
+    function enginePreviewMapping(regions, saved, engineId) {
+        var result=[];
+        for(var i=0;i<regions.length;i++){
+            var old=null;
+            for(var j=0;j<(saved || []).length;j++)if(saved[j].id===regions[i].id)old=saved[j];
+            result.push({id:regions[i].id,translation:'Xem thử',clean:old?old.clean!==false:true,
+                         force:engineId==='baseline' && !!(old && old.force)});
+        }
+        return result;
+    }
+    function cleanSelection(region, mapping, engineId) {
+        // Selection is user intent. Only the legacy baseline UI uses its
+        // auto-clean flag to gate the checkbox; engines validate their own mask.
+        return mapping.clean === true && (engineId !== 'baseline' || region.auto_clean || mapping.force === true);
+    }
+    function cleanControlEnabled(hasMask, offline, fullPage, engineId) {
+        return !offline && !fullPage && (engineId !== 'baseline' || hasMask);
+    }
+    function cleanRegionStatus(region, engineId) {
+        if (engineId !== 'baseline') return 'Engine ' + engineId + ' sẽ kiểm tra';
+        return region.auto_clean ? 'Clean được' : 'CLEAN THỦ CÔNG';
+    }
+    function savedEngine(entry, queued, data) {
+        return (entry && entry.engine) || (queued && queued.engine) ||
+               (data && data.engine_selection) || {id:'baseline',version:'baseline-1'};
+    }
+    function cleanResultSummary(result) {
+        var review = result.review_ids || [], skipped = [], legacy = result.skipped || [];
+        for (var i = 0; i < legacy.length; i++) {
+            var needsReview = false;
+            for (var j = 0; j < review.length; j++) if (legacy[i] === review[j]) needsReview = true;
+            if (!needsReview) skipped.push(legacy[i]);
+        }
+        return (review.length ? ' — cần duyệt kết quả: ' + review.join(', ') : '') +
+               (skipped.length ? ' — chưa clean: ' + skipped.join(', ') : '');
+    }
+    function text(file) {
+        file = file instanceof File ? file : new File(file);
+        file.encoding = 'UTF8';
+        if (!file.open('r')) throw Error('Không đọc được: ' + file.fsName);
+        var s; try { s = file.read(); } finally { file.close(); }
+        return s;
+    }
+    function write(file, content) {
+        file = file instanceof File ? file : new File(file);
+        file.encoding = 'UTF8'; file.lineFeed = 'Unix';
+        if (!file.open('w')) throw Error('Không ghi được: ' + file.fsName);
+        try { if (!file.write(content)) throw Error('Ghi file thất bại: ' + file.fsName); }
+        finally { file.close(); }
+    }
+    function mkdir(path) {
+        var folder = path instanceof Folder ? path : new Folder(path);
+        if (!folder.exists) {
+            if (!folder.parent.exists) mkdir(folder.parent);
+            if (!folder.create()) throw Error('Không tạo được thư mục: ' + folder.fsName);
+        }
+        return folder;
+    }
+    function unique() { serial++; return (new Date()).getTime() + '_' + serial; }
+    function confirmChapter(rows, mode, reviewMode) {
+        var dlg = new Window('dialog', 'Xác nhận thứ tự chương');
+        dlg.orientation = 'column'; dlg.alignChildren = 'fill';
+        dlg.add('statictext', undefined, 'Thứ tự chương (' + rows.length + ' trang):');
+        var list = dlg.add('listbox', undefined, rows);
+        list.preferredSize = [560, 280];
+        dlg.add('statictext', undefined, 'Nhận diện: ' + mode);
+        dlg.add('statictext', undefined, reviewMode);
+        var buttons = dlg.add('group'); buttons.alignment = 'right';
+        buttons.add('button', undefined, 'Hủy', {name:'cancel'});
+        buttons.add('button', undefined, 'Bắt đầu', {name:'ok'});
+        dlg.center();
+        return dlg.show() === 1;
+    }
+    function shell(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+    function vbLiteral(s) { return '"' + String(s).replace(/"/g, '""') + '"'; }
+    function request(root, payload, tick) {
+        var windows = /^windows/i.test($.os);
+        var python = new File(root.fsName + (windows ? '/.venv/Scripts/python.exe' : '/.venv/bin/python'));
+        if (!python.exists) throw Error('Thiếu Python trong .venv. Hãy cài môi trường của dự án.');
+        var dir = mkdir(root.fsName + '/work/jobs/' + unique());
+        var input = new File(dir.fsName + '/request.json');
+        var output = new File(dir.fsName + '/response.json');
+        var cancel = new File(dir.fsName + '/cancel');
+        payload.cancel = cancel.fsName;
+        write(input, MJSON.stringify(payload));
+        if (windows) {
+            // WScript.Shell.Run launches the worker directly without cmd.exe
+            // interpolation. WScript expands %ENV%; reject it in paths.
+            var paths=[python.fsName,root.fsName+'/manga_typesetter.py',input.fsName,output.fsName,dir.fsName];
+            for(var wi=0;wi<paths.length;wi++)if(/[%\r\n]/.test(paths[wi]))throw Error('Đường dẫn Windows chứa % hoặc xuống dòng không được hỗ trợ.');
+            var launcher=new File(dir.fsName+'/launch.vbs');launcher.encoding='UTF-16';launcher.lineFeed='Windows';
+            if(!launcher.open('w'))throw Error('Không tạo được launcher Windows.');
+            try { launcher.write('Set sh = CreateObject("WScript.Shell")\r\n' +
+                'sh.Environment("PROCESS")("OMP_THREAD_LIMIT") = "1"\r\nsh.Environment("PROCESS")("OPENBLAS_NUM_THREADS") = "1"\r\n' +
+                'q = Chr(34)\r\ncmd = q & '+vbLiteral(paths[0])+' & q & " " & q & '+vbLiteral(paths[1])+' & q & " --request " & q & '+vbLiteral(paths[2])+' & q & " --response " & q & '+vbLiteral(paths[3])+' & q\r\nsh.Run cmd, 0, False\r\n'); }
+            finally { launcher.close(); }
+            app.system('wscript.exe //B "'+launcher.fsName+'"');
+        } else {
+            var command = 'OMP_THREAD_LIMIT=1 OPENBLAS_NUM_THREADS=1 ' + shell(python.fsName) + ' ' +
+                shell(root.fsName + '/manga_typesetter.py') + ' --request ' + shell(input.fsName) +
+                ' --response ' + shell(output.fsName) + ' > ' + shell(dir.fsName + '/worker.log') + ' 2>&1 &';
+            app.system('/bin/sh -c ' + shell(command));
+        }
+        var start = (new Date()).getTime();
+        while (!output.exists) {
+            if (tick && tick() === false) { write(cancel, 'cancel'); throw Error('Đã hủy; backend sẽ dừng tại điểm an toàn.'); }
+            if ((new Date()).getTime() - start > 180000) {
+                write(cancel, 'timeout');
+                throw Error('Python không phản hồi trong 180 giây. Xem ' + dir.fsName + '/worker.log; có thể dùng CLI tiền xử lý.');
+            }
+            $.sleep(120);
+        }
+        var response = MJSON.parse(text(output));
+        if (!response.ok) throw Error(response.error + '\nLog: ' + dir.fsName + '/worker.log');
+        return response.result;
+    }
+    function snapshot(doc, folder) {
+        var copy = null;
+        try {
+            app.activeDocument = doc;
+            copy = doc.duplicate('MTA snapshot', true);
+            if (copy.mode !== DocumentMode.RGB) copy.changeMode(ChangeMode.RGB);
+            copy.bitsPerChannel = BitsPerChannelType.EIGHT;
+            var file = new File(folder.fsName + '/input.png');
+            copy.saveAs(file, new PNGSaveOptions(), true, Extension.LOWERCASE);
+            return file;
+        } finally { if (copy) copy.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
+    }
+    function bounds(layer) {
+        var b = layer.bounds;
+        return [b[0].as('px'), b[1].as('px'), b[2].as('px'), b[3].as('px')];
+    }
+    function addText(doc, group, region, translation, options) {
+        var shape = region.shape && !region.safe_limit ? region.shape : null;
+        var box = shape ? shape.box : region.safe, layer = doc.artLayers.add();
+        var center = shape ? shape.center : [box[0]+box[2]/2,box[1]+box[3]/2];
+        var previousQuotes=app.preferences.smartQuotes;
+        try {
+            if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=false;
+            layer.kind = LayerKind.TEXT;
+            layer.name = region.id + ' | ' + translation.substr(0, 40).replace(/[\r\n]/g, ' ');
+            var t = layer.textItem;
+            t.kind = TextType.POINTTEXT;
+            t.font = options.font;
+            t.justification = Justification.CENTER;
+            t.position = [UnitValue(doc.width.as('px')/2, 'px'), UnitValue(doc.height.as('px')/2, 'px')];
+            t.useAutoLeading = false;
+            t.antiAliasMethod = AntiAlias.SHARP;
+            var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
+            var maxW = box[2] - 4, maxH = box[3] - 4;
+            function measure(content) {
+                t.contents = content || ' '; var b = bounds(layer);
+                return [b[2] - b[0], b[3] - b[1]];
+            }
+            function shapeAttempt(size) {
+                t.size=UnitValue(size*72/doc.resolution,'pt');
+                t.leading=UnitValue(size*options.leading*72/doc.resolution,'pt');
+                var lead=size*options.leading, ref=measure('ẤỮộgj'), maxLines=Math.min(24,Math.floor(box[3]/lead)+1);
+                var widthCache={};
+                function textWidth(content){var key='$'+content;if(widthCache[key]===undefined)widthCache[key]=measure(content)[0];return widthCache[key];}
+                var paragraphs=translation.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+                for(var count=1;count<=maxLines;count++){
+                    var top=center[1]-(ref[1]+(count-1)*lead)/2, lines=[], widths=[], bad=false;
+                    for(var row=0;row<count;row++) widths.push(shapeWidth(shape,top+row*lead,top+row*lead+ref[1],center[0])-4);
+                    for(var pi=0;pi<paragraphs.length;pi++){
+                        var words=paragraphs[pi].replace(/^\s+|\s+$/g,'').split(/\s+/), line='';
+                        for(var wi=0;wi<words.length;wi++){
+                            var next=line?line+' '+words[wi]:words[wi];
+                            if(line && textWidth(next)>(widths[lines.length]||0)){lines.push(line);line=words[wi];}else line=next;
+                            if(lines.length>=count){bad=true;break;}
+                        }
+                        if(bad)break;lines.push(line);
+                    }
+                    if(bad)continue;
+                    if(lines.length!==count){
+                        // Greedy wrapping can oscillate: two narrow rows need
+                        // three lines, while three wider rows greedily make two.
+                        // Fit exactly the chosen row count before rejecting it.
+                        lines=wrapToWidths(paragraphs,widths,textWidth);
+                        if(!lines)continue;bad=false;
+                    }
+                    var content=lines.join('\r');measure(content);var all=bounds(layer);
+                    var dx=center[0]-(all[0]+all[2])/2,dy=center[1]-(all[1]+all[3])/2;
+                    for(var li=0;li<lines.length;li++){
+                        measure(lines[li]);var b=bounds(layer), left=b[0]+dx,right=b[2]+dx;
+                        if(!shapeRectFits(shape,left,b[1]+li*lead+dy,right,b[3]+li*lead+dy)){bad=true;break;}
+                    }
+                    if(!bad)return {fits:true,content:content,size:size};
+                }
+                return {fits:false,content:'',size:size};
+            }
+            function attempt(size) {
+                if(shape)return shapeAttempt(size);
+                t.size = UnitValue(size * 72 / doc.resolution, 'pt');
+                t.leading = UnitValue(size * options.leading * 72 / doc.resolution, 'pt');
+                var paragraphs = translation.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+                var lines = [], i, j;
+                for (i = 0; i < paragraphs.length; i++) {
+                    var words = paragraphs[i].replace(/^\s+|\s+$/g, '').split(/\s+/), line = '';
+                    for (j = 0; j < words.length; j++) {
+                        if (!words[j]) continue;
+                        var next = line ? line + ' ' + words[j] : words[j];
+                        if (line && measure(next)[0] > maxW) { lines.push(line); line = words[j]; }
+                        else line = next;
+                    }
+                    lines.push(line);
+                }
+                var content = lines.join('\r'), sizePx = measure(content);
+                return {fits: sizePx[0] <= maxW && sizePx[1] <= maxH, content: content, size: size};
+            }
+            var best = attempt(options.min);
+            if (!best.fits) throw Error(region.id + ': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.');
+            var low = options.min, high = options.max;
+            while (high - low >= .5) {
+                var mid = (low + high) / 2, result = attempt(mid);
+                if (result.fits) { best = result; low = mid; } else high = mid;
+            }
+            t.size = UnitValue(best.size * 72 / doc.resolution, 'pt');
+            t.leading = UnitValue(best.size * options.leading * 72 / doc.resolution, 'pt');
+            t.contents = best.content;
+            var actual = bounds(layer);
+            layer.translate(UnitValue(center[0] - (actual[0] + actual[2])/2, 'px'),
+                            UnitValue(center[1] - (actual[1] + actual[3])/2, 'px'));
+            actual = bounds(layer);
+            if (actual[0] < box[0] - .5 || actual[1] < box[1] - .5 ||
+                actual[2] > box[0]+box[2]+.5 || actual[3] > box[1]+box[3]+.5) throw Error(region.id + ': chữ vượt vùng an toàn');
+            layer.move(group, ElementPlacement.INSIDE);
+            return layer;
+        } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
+        finally { if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=previousQuotes; }
+    }
+    // Recovery placement deliberately does not promise to fit the region.
+    // Preserve the whole string in a visible, movable Photoshop text layer.
+    function addFallbackText(doc, group, text, options, center, name, maxWidth) {
+        var layer = doc.artLayers.add(), previousQuotes = app.preferences.smartQuotes;
+        try {
+            if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = false;
+            layer.kind = LayerKind.TEXT; layer.name = name;
+            var t = layer.textItem; t.kind = TextType.POINTTEXT;
+            try { t.font = options.font; } catch (_) { t.font = 'ArialMT'; }
+            t.justification = Justification.CENTER;
+            t.size = UnitValue(Math.max(4, options.min) * 72 / doc.resolution, 'pt');
+            t.useAutoLeading = false; t.leading = UnitValue(Math.max(4, options.min) * options.leading * 72 / doc.resolution, 'pt');
+            t.position = [UnitValue(center[0], 'px'), UnitValue(center[1], 'px')];
+            var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
+            var paragraphs=String(text).replace(/\r\n|\r/g,'\n').split('\n'), output=[];
+            var limit=Math.max(20,Math.min(Number(maxWidth)||doc.width.as('px')*.35,doc.width.as('px')*.8));
+            for(var p=0;p<paragraphs.length;p++){
+                var words=paragraphs[p].split(/\s+/), line='';
+                for(var n=0;n<words.length;n++){
+                    if(!words[n])continue;
+                    var next=line ? line+' '+words[n] : words[n];
+                    t.contents=next;var measured=bounds(layer);
+                    if(line && measured[2]-measured[0]>limit){output.push(line);line=words[n];}
+                    else line=next;
+                }
+                output.push(line);
+            }
+            t.contents=output.join('\r');
+            layer.move(group, ElementPlacement.INSIDE);
+            return layer;
+        } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
+        finally { if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = previousQuotes; }
+    }
+    function addOverlay(doc, file, name) {
+        var image = null;
+        try {
+            image = app.open(new File(file));
+            // Photoshop UnitValue conversions can differ from integer pixel
+            // dimensions by floating-point rounding (e.g. 960.0000000000001).
+            if (Math.round(image.width.as('px')) !== Math.round(doc.width.as('px')) || Math.round(image.height.as('px')) !== Math.round(doc.height.as('px')))
+                throw Error('Ảnh clean và tài liệu không cùng kích thước');
+            var originalBounds = bounds(image.activeLayer);
+            var layer = image.activeLayer.duplicate(doc, ElementPlacement.PLACEATBEGINNING);
+            image.close(SaveOptions.DONOTSAVECHANGES); image = null;
+            app.activeDocument = doc;
+            var copiedBounds = bounds(layer);
+            layer.translate(UnitValue(originalBounds[0]-copiedBounds[0], 'px'), UnitValue(originalBounds[1]-copiedBounds[1], 'px'));
+            layer.name = name || 'CLEAN / REDRAW';
+            return layer;
+        } finally { if (image) image.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
+    }
+    function translationKey(parsed,name,index) {
+        var match=/(\d+)(?=\.[^.]+$)/.exec(decodeURI(name));
+        if(parsed.marked && match && (parsed.filename_pages || parsed.pages[String(Number(match[1]))])) return String(Number(match[1]));
+        return parsed.marked ? String(index+1) : '1';
+    }
+    function sourceNameAllowed(name){
+        name=decodeURI(name);
+        return /\.(jpe?g|png|psd)$/i.test(name) && !/_(clean|typeset)(?:_\d+)?\.(jpe?g|png|psd)$/i.test(name);
+    }
+    // The user's automatic roles follow balloon geometry, not punctuation.
+    function suggestTextRole(region, translation) {
+        if (region.bubble_font_style === 'dialogue' || region.bubble_font_style === 'box' || region.bubble_font_style === 'shout') return region.bubble_font_style;
+        if (region.detector === 'comic_text_ai') return 'dialogue';
+        var p = region.outline, b = region.box, area = 0;
+        if (p && p.length >= 4 && b && b[2] > 0 && b[3] > 0) {
+            for (var i = 0; i < p.length; i++) {
+                var next = p[(i + 1) % p.length];
+                area += p[i][0] * next[1] - next[0] * p[i][1];
+            }
+            if (Math.abs(area) / 2 / (b[2] * b[3]) >= 0.90) return 'box';
+        }
+        return 'dialogue';
+    }
+    function resolveTextRole(region, translation, selected, automatic) {
+        if (selected === 'dialogue' || selected === 'box' || selected === 'shout') return selected;
+        return automatic ? suggestTextRole(region, translation) : 'dialogue';
+    }
+    function shapeWidth(shape,top,bottom,cx) {
+        var left=-Infinity,right=Infinity,found=0;
+        for(var i=0;i<shape.rows.length;i++){var r=shape.rows[i];if(r[0]>=Math.floor(top) && r[0]<Math.ceil(bottom)){left=Math.max(left,r[1]);right=Math.min(right,r[2]);found++;}}
+        if(found<Math.ceil(bottom)-Math.floor(top))return 0;
+        return Math.max(0,2*Math.min(cx-left,right-cx));
+    }
+    function shapeRectFits(shape,left,top,right,bottom) {
+        return right-left<=shapeWidth(shape,top,bottom,(left+right)/2)-1;
+    }
+    function wrapToWidths(paragraphs,widths,measure) {
+        var words=[],i;
+        for(i=0;i<paragraphs.length;i++)words.push(paragraphs[i].replace(/^\s+|\s+$/g,'').split(/\s+/));
+        var memo={};
+        function solve(row,paragraph,start){
+            if(row===widths.length)return paragraph===words.length?{cost:0,lines:[]}:null;
+            if(paragraph>=words.length || widths[row]<=0)return null;
+            var key=row+':'+paragraph+':'+start;
+            if(memo[key]!==undefined)return memo[key];
+            var best=null,content='';
+            for(var end=start;end<words[paragraph].length;end++){
+                content+=(end>start?' ':'')+words[paragraph][end];
+                var width=measure(content);if(width>widths[row])break;
+                var next=end+1===words[paragraph].length;
+                var tail=solve(row+1,next?paragraph+1:paragraph,next?0:end+1);
+                if(!tail)continue;
+                var cost=tail.cost+Math.pow((widths[row]-width)/widths[row],2);
+                if(!best || cost<best.cost)best={cost:cost,lines:[content].concat(tail.lines)};
+            }
+            memo[key]=best;return best;
+        }
+        var result=solve(0,0,0);return result?result.lines:null;
+    }
+    function unmappedTranslations(lines, mapping) {
+        function normal(s) { return String(s).replace(/\s/g,'').toLowerCase(); }
+        var available=[],pending=[],order=[],i,j;
+        for(i=0;i<mapping.length;i++)available.push(normal(mapping[i].translation));
+        for(i=0;i<lines.length;i++)if(normal(lines[i]))order.push({index:i,text:normal(lines[i])});
+        // Consume longer lines first, so "..." inside a sentence cannot count
+        // as an additional standalone utterance. Duplicate lines need copies.
+        order.sort(function(a,b){return b.text.length-a.text.length;});
+        for(i=0;i<order.length;i++){
+            var found=false;
+            for(j=0;j<available.length;j++){
+                var at=available[j].indexOf(order[i].text);
+                if(at>=0){available[j]=available[j].substr(0,at)+'|'+available[j].substr(at+order[i].text.length);found=true;break;}
+            }
+            if(!found)pending.push(order[i].index);
+        }
+        pending.sort(function(a,b){return a-b;});return pending;
+    }
+    function mergeNextTranslation(lines,mapping,index) {
+        if(index<0 || index>=mapping.length-1)throw Error('Chọn vùng có câu kế tiếp để gộp.');
+        var texts=[],probe=[],i;
+        for(i=0;i<mapping.length;i++)texts.push(mapping[i].translation);
+        texts[index]+=(texts[index]?'\n':'')+texts[index+1];texts.splice(index+1,1);
+        for(i=0;i<texts.length;i++)probe.push({translation:texts[i]});
+        var missing=unmappedTranslations(lines,probe);
+        texts.push(missing.length?lines[missing[0]]:'');return texts;
+    }
+    function hitRegion(regions, width, height, imageWidth, imageHeight, controlWidth, controlHeight, x, y) {
+        x=(x-(controlWidth-imageWidth)/2)*width/imageWidth;
+        y=(y-(controlHeight-imageHeight)/2)*height/imageHeight;
+        var best=-1, area=Infinity;
+        for(var i=0;i<regions.length;i++) { var b=regions[i].box;
+            if(x>=b[0] && y>=b[1] && x<b[0]+b[2] && y<b[1]+b[3] && b[2]*b[3]<area){best=i;area=b[2]*b[3];}
+        }
+        return best;
+    }
+    function editSafe(region, rect) {
+        var limit = region.safe_limit || region.safe;
+        for (var i=0;i<4;i++) if(typeof rect[i] !== 'number' || !isFinite(rect[i]) || Math.floor(rect[i]) !== rect[i]) throw Error('Tọa độ phải là số nguyên');
+        if(rect[2]<=0 || rect[3]<=0 || rect[0]<limit[0] || rect[1]<limit[1] || rect[0]+rect[2]>limit[0]+limit[2] || rect[1]+rect[3]>limit[1]+limit[3]) throw Error('Vùng chữ phải nằm trong vùng an toàn ban đầu. Thêm vùng thủ công nếu cần mở rộng.');
+        region.safe_limit=limit.slice(0); region.safe=rect.slice(0);
+    }
+    function validateManifest(data, width, height) {
+        function number(v) { return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v; }
+        if (data.schema !== 1 || !(data.regions instanceof Array) || data.width !== width || data.height !== height)
+            throw Error('Manifest không hợp lệ hoặc kích thước khác tài liệu.');
+        var ids = {};
+        for (var i = 0; i < data.regions.length; i++) {
+            var region = data.regions[i], id = region.id;
+            if (typeof id !== 'string' || !/^B[0-9]+$/.test(id) || ids[id]) throw Error('ID vùng không hợp lệ hoặc lặp');
+            ids[id] = true;
+            var names = ['box', 'safe'];
+            for (var j = 0; j < names.length; j++) {
+                var rect = region[names[j]];
+                if (!(rect instanceof Array) || rect.length !== 4) throw Error('Thiếu tọa độ vùng');
+                for (var k = 0; k < 4; k++) if (!number(rect[k])) throw Error('Tọa độ cần là số nguyên hữu hạn');
+                if (rect[2] <= 0 || rect[3] <= 0 || rect[0]+rect[2] > width || rect[1]+rect[3] > height) throw Error('Vùng vượt kích thước trang');
+            }
+            var b = region.box, a = region.safe;
+            if (a[0] < b[0] || a[1] < b[1] || a[0]+a[2] > b[0]+b[2] || a[1]+a[3] > b[1]+b[3]) throw Error('Vùng an toàn nằm ngoài bong bóng');
+            if (typeof region.source !== 'string' || !(region.warnings instanceof Array) || typeof region.auto_clean !== 'boolean') throw Error('Metadata vùng không hợp lệ');
+        }
+        return data;
+    }
+    function saveCopy(doc, folder, base, exports, kind, savedFiles) {
+        mkdir(folder);
+        exports = exports || {};
+        var savePsd = exports.psd !== false, savePdf = exports.pdf === true;
+        if (!savePsd && !savePdf) throw Error('Chọn ít nhất một định dạng: PSD hoặc Photoshop PDF.');
+        base = base.replace(/\.[^.]+$/, '').replace(/[\/:\x00-\x1f]/g, '_');
+        var suffix = kind === 'clean' ? '_clean' : '_typeset';
+        var name = base + suffix, n = 1;
+        while (new File(folder.fsName + '/' + name + '.psd').exists ||
+               new File(folder.fsName + '/' + name + '.pdf').exists ||
+               new File(folder.fsName + '/' + name + '.png').exists ||
+               new File(folder.fsName + '/' + name + '.jpg').exists) name = base + suffix + '_' + (n++);
+        var psd = new File(folder.fsName + '/' + name + '.psd');
+        var pdf = new File(folder.fsName + '/' + name + '.pdf');
+        if (savePsd) {
+            var opts = new PhotoshopSaveOptions(); opts.layers = true; opts.embedColorProfile = true;
+            doc.saveAs(psd, opts, true, Extension.LOWERCASE);
+            if (savedFiles) savedFiles.psd = psd.fsName;
+        }
+        if (savePdf) {
+            var pdfOpts = new PDFSaveOptions();
+            pdfOpts.preserveEditing = true;
+            pdfOpts.layers = true;
+            pdfOpts.embedColorProfile = true;
+            doc.saveAs(pdf, pdfOpts, true, Extension.LOWERCASE);
+            if (savedFiles) savedFiles.pdf = pdf.fsName;
+        }
+        if (exports && (exports.png || exports.jpg)) {
+            var flat = doc.duplicate('MTA export', true);
+            try {
+                flat.bitsPerChannel = BitsPerChannelType.EIGHT;
+                if (exports.png) {
+                    var pngDoc = flat.duplicate('MTA PNG export', true);
+                    try {
+                        if (pngDoc.mode !== DocumentMode.RGB) pngDoc.changeMode(ChangeMode.RGB);
+                        pngDoc.saveAs(new File(folder.fsName + '/' + name + '.png'), new PNGSaveOptions(), true, Extension.LOWERCASE);
+                    } finally { pngDoc.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = flat; }
+                }
+                if (exports.jpg) {
+                    if (!exports.cmykJpeg && flat.mode !== DocumentMode.RGB) flat.changeMode(ChangeMode.RGB);
+                    flat.flatten(); var jpg = new JPEGSaveOptions(); jpg.quality = 10; jpg.embedColorProfile = true;
+                    flat.saveAs(new File(folder.fsName + '/' + name + '.jpg'), jpg, true, Extension.LOWERCASE);
+                }
+            } finally { flat.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
+        }
+        return savePsd ? psd : pdf;
+    }
+    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, confirmChapter: confirmChapter, shell: shell, request: request,
+            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addFallbackText: addFallbackText, addOverlay: addOverlay, saveCopy: saveCopy};
+})();

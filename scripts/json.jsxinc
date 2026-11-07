@@ -1,0 +1,88 @@
+/* ES3 JSON parser/serializer. No eval; works with Photoshop ExtendScript. */
+var MJSON = (function () {
+    function quote(s) {
+        return '"' + String(s).replace(/["\\\x00-\x1f]/g, function (c) {
+            var map = {'"':'\\"', '\\':'\\\\', '\n':'\\n', '\r':'\\r', '\t':'\\t', '\b':'\\b', '\f':'\\f'};
+            if (map[c]) return map[c];
+            return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+        }) + '"';
+    }
+    function stringify(v) {
+        var parts = [], k, i;
+        if (v === null) return 'null';
+        if (typeof v === 'string') return quote(v);
+        if (typeof v === 'boolean') return v ? 'true' : 'false';
+        if (typeof v === 'number') {
+            if (!isFinite(v)) throw Error('JSON: số không hữu hạn');
+            return String(v);
+        }
+        if (v instanceof Array) {
+            for (i = 0; i < v.length; i++) parts.push(stringify(v[i]));
+            return '[' + parts.join(',') + ']';
+        }
+        if (typeof v === 'object') {
+            for (k in v) if (v.hasOwnProperty(k)) parts.push(quote(k) + ':' + stringify(v[k]));
+            return '{' + parts.join(',') + '}';
+        }
+        throw Error('JSON: kiểu dữ liệu không hỗ trợ');
+    }
+    function parse(text) {
+        text = String(text).replace(/^\uFEFF/, '');
+        var p = 0;
+        function ws() { while (/\s/.test(text.charAt(p)) && p < text.length) p++; }
+        function fail() { throw Error('JSON không hợp lệ tại ký tự ' + p); }
+        function str() {
+            var s = '', c, h;
+            if (text.charAt(p++) !== '"') fail();
+            while (p < text.length) {
+                c = text.charAt(p++);
+                if (c === '"') return s;
+                if (c === '\\') {
+                    c = text.charAt(p++);
+                    if (c === 'u') {
+                        h = text.substr(p, 4);
+                        if (!/^[0-9a-fA-F]{4}$/.test(h)) fail();
+                        s += String.fromCharCode(parseInt(h, 16)); p += 4;
+                    } else {
+                        var escapes = {'"':'"', '\\':'\\', '/':'/', 'n':'\n', 'r':'\r', 't':'\t', 'b':'\b', 'f':'\f'};
+                        if (!escapes.hasOwnProperty(c)) fail();
+                        s += escapes[c];
+                    }
+                } else { if (c.charCodeAt(0) < 32) fail(); s += c; }
+            }
+            fail();
+        }
+        function value(depth) {
+            if (depth > 100) fail();
+            ws(); var c = text.charAt(p), out, k, match;
+            if (c === '"') return str();
+            if (c === '{' || c === '[') {
+                p++; out = c === '{' ? {} : []; ws();
+                var end = c === '{' ? '}' : ']';
+                if (text.charAt(p) === end) { p++; return out; }
+                while (true) {
+                    ws();
+                    if (c === '{') {
+                        k = str(); ws(); if (text.charAt(p++) !== ':') fail();
+                        if (k === '__proto__' || k === 'constructor' || k === 'prototype') fail();
+                        out[k] = value(depth + 1);
+                    } else out.push(value(depth + 1));
+                    ws(); var sep = text.charAt(p++);
+                    if (sep === end) return out;
+                    if (sep !== ',') fail();
+                }
+            }
+            var rest = text.substring(p);
+            if (rest.substr(0, 4) === 'true') { p += 4; return true; }
+            if (rest.substr(0, 5) === 'false') { p += 5; return false; }
+            if (rest.substr(0, 4) === 'null') { p += 4; return null; }
+            match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(rest);
+            if (!match) fail();
+            p += match[0].length; out = Number(match[0]);
+            if (!isFinite(out)) fail();
+            return out;
+        }
+        var output = value(0); ws(); if (p !== text.length) fail(); return output;
+    }
+    return {parse: parse, stringify: stringify};
+})();

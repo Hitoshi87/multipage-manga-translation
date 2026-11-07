@@ -1,0 +1,5 @@
+# Versions tested on this Apple Silicon Mac (macOS >=14 for this ORT wheel).
+# Intel/macOS13 use requirements-ai.txt so pip selects a compatible wheel.
+onnxruntime==1.31.1
+flatbuffers==25.12.19
+protobuf==7.36.2

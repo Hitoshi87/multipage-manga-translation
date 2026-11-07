@@ -1,0 +1,175 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "id": "balloon",
+      "path": "balloon.onnx",
+      "url": "https://raw.githubusercontent.com/igun997/manga-translator/1397af38e3464cdf4931c705857b8bef015030dc/manga_models/bubble.onnx",
+      "revision": "1397af38e3464cdf4931c705857b8bef015030dc",
+      "sha256": "88b84105ad2faec516fd164a2783fa6b6007dfd6ab07aa90e92b0241e51ea4cf",
+      "size_bytes": 12465247,
+      "profiles": [
+        "1107"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "text",
+      "path": "comic_text_int8.onnx",
+      "url": "https://huggingface.co/ogkalu/comic-text-and-bubble-detector/resolve/16e8a622f91fabc6b5b65c96d32d1183f8843546/detector_int8.onnx",
+      "revision": "16e8a622f91fabc6b5b65c96d32d1183f8843546",
+      "sha256": "b5022ad46416b6fe4f88b0cc082cfd2ff5b1cfc624088c2f19879485493f5913",
+      "size_bytes": 43838857,
+      "profiles": [
+        "1107"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "comic_ctd",
+      "path": "comic_ctd.onnx",
+      "url": "https://huggingface.co/lemondouble/lemon-manga-translator/resolve/e8c08f38f188db684fdc32c4cf88627c7df92096/onnx/comic-text-detector/ctd.onnx",
+      "revision": "e8c08f38f188db684fdc32c4cf88627c7df92096",
+      "sha256": "eea9f9ccad2364fcb15bdfeca25268be273fea80b111ba6a6f4c03f556c24c26",
+      "size_bytes": 77035608,
+      "profiles": [
+        "1107",
+        "preview"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "comic_text_mask",
+      "path": "comic_text_mask.pt",
+      "url": "https://huggingface.co/TareHimself/comic-text-mask/resolve/ebd37f1a9ae9298519678fb96a796573fb602977/model.pt",
+      "revision": "ebd37f1a9ae9298519678fb96a796573fb602977",
+      "sha256": "c1de7cd35c5cce1c5eca4e03696129dc9649db6ebe7d03fe1b995d7aca73e605",
+      "size_bytes": 57593864,
+      "profiles": [
+        "preview"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "lama_manga",
+      "path": "lama_manga.onnx",
+      "url": "https://huggingface.co/ogkalu/lama-manga-onnx-dynamic/resolve/ee4ed4a8447b6730fc41d34f90876b6c48af925a/lama-manga-dynamic.onnx",
+      "revision": "ee4ed4a8447b6730fc41d34f90876b6c48af925a",
+      "sha256": "de31ffa5ba26916b8ea35319f6c12151ff9654d4261bccf0583a69bb095315f9",
+      "size_bytes": 206291843,
+      "profiles": [
+        "preview"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "koharu_layout",
+      "path": "koharu_layout.onnx",
+      "url": "https://huggingface.co/ShiniShiho/koharu-layout-rfdetr-seg-2xl-1152-onnx/resolve/bfbbd4e5ab34a50459865074fa044da496cebb57/rfdetr-seg-2xlarge.onnx",
+      "revision": "bfbbd4e5ab34a50459865074fa044da496cebb57",
+      "sha256": "7cc10d4316371946b8441da3512261a8e148b129abcdb0ea6235ed1d1d06d351",
+      "size_bytes": 148442003,
+      "profiles": [
+        "preview"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "animeheadsv3",
+      "path": "face/animeheadsv3.onnx",
+      "url": "https://huggingface.co/tori29umai/AnimeHeads-ONNX/resolve/98c202184f35f55f85872c0affafd5361d20eb6d/weights/animeheadsv3.onnx",
+      "revision": "98c202184f35f55f85872c0affafd5361d20eb6d",
+      "sha256": "7f6ee8482dc12af94ebdd993ca6c21bb58668562714057c6948e6d639150b255",
+      "size_bytes": 174671370,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "vision_int4",
+      "path": "baberu/onnx/vision_int4.onnx",
+      "url": "https://huggingface.co/genshiai-daichi/baberu-ocr/resolve/b9868433dbda3ed9ba1357d008599ff4ada873d5/onnx/vision_int4.onnx",
+      "revision": "b9868433dbda3ed9ba1357d008599ff4ada873d5",
+      "sha256": "1967ecef502e4c1e1e7c512ea0a2e06396b39ded87a8a9cc77bd7db2e981a361",
+      "size_bytes": 52293486,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "decoder_prefill_int8",
+      "path": "baberu/onnx/decoder_prefill_int8.onnx",
+      "url": "https://huggingface.co/genshiai-daichi/baberu-ocr/resolve/b9868433dbda3ed9ba1357d008599ff4ada873d5/onnx/decoder_prefill_int8.onnx",
+      "revision": "b9868433dbda3ed9ba1357d008599ff4ada873d5",
+      "sha256": "187a59cb61d3870f1f97c9eb027eb34ff19d023fba801cda113a13870be0b724",
+      "size_bytes": 35133596,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "decoder_step_int8",
+      "path": "baberu/onnx/decoder_step_int8.onnx",
+      "url": "https://huggingface.co/genshiai-daichi/baberu-ocr/resolve/b9868433dbda3ed9ba1357d008599ff4ada873d5/onnx/decoder_step_int8.onnx",
+      "revision": "b9868433dbda3ed9ba1357d008599ff4ada873d5",
+      "sha256": "46640b0b3db77f0f0eef660bbe5dc9126a5e0fb49eb2786b2edba7b0371d9769",
+      "size_bytes": 34715466,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "vocab",
+      "path": "baberu/tokenizer/vocab.json",
+      "url": "https://huggingface.co/genshiai-daichi/baberu-ocr/resolve/b9868433dbda3ed9ba1357d008599ff4ada873d5/tokenizer/vocab.json",
+      "revision": "b9868433dbda3ed9ba1357d008599ff4ada873d5",
+      "sha256": "681de4eb83154a397af49e2ddae4705041b12a22e16fe00860b829e889e5f47c",
+      "size_bytes": 130761,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "model_qint8_avx512_vnni",
+      "path": "e5/model_qint8_avx512_vnni.onnx",
+      "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/onnx/model_qint8_avx512_vnni.onnx",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "sha256": "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88",
+      "size_bytes": 118346824,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "tokenizer",
+      "path": "e5/tokenizer.json",
+      "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/tokenizer.json",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+      "size_bytes": 17082730,
+      "profiles": [
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "aot",
+      "path": "aot_manga.safetensors",
+      "url": "https://huggingface.co/mayocream/aot-inpainting/resolve/cffe2346ac2b5ebe1f2d61335d602d12cc144c6f/model.safetensors",
+      "revision": "cffe2346ac2b5ebe1f2d61335d602d12cc144c6f",
+      "sha256": "1b4fea17a84a228c2097a42ab2f403357f07bb56ae022dc243b40817b7aa87d1",
+      "size_bytes": 22732864,
+      "profiles": [
+        "aot"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    }
+  ]
+}

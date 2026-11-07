@@ -1,0 +1,44 @@
+# Local environments and generated Python files
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+# Private data, inference artifacts and exports
+/work/
+/output/
+*.psd
+*.psb
+*.zip
+*.log
+*.part
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# All weights live outside Git (metadata stays in Git)
+/models/**
+!/models/NOTICE.md
+!/models/manifest.json
+!/models/README.md
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.gguf
+# Additional generated build/test files and raw input folders
+/build/
+/dist/
+/input/
+/datasets/
+/checkpoints/
+.mypy_cache/
+.coverage
+htmlcov/
+*.pdf
+*.tif
+*.tiff
