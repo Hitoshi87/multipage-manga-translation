@@ -518,30 +518,48 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
             continue
         if lang.startswith('jpn') and region_calls <= 29 and time.monotonic()-started < 75:
             base_confidence = sum(v['confidence'] for v in group)/len(group)
-            if base_confidence < 80:
+            # Several separate text groups in one silhouette also signals a chain
+            # of joined bubbles, even when OCR confidence is high.
+            text_groups = sum(1 for d in text_detections if d.get('kind') == 'in_bubble' and d['confidence'] >= .85 and
+                              _box_overlap(d['box'], candidate['box']) >= .9) if detector == 'ai' else 0
+            if base_confidence < 80 or text_groups >= 3:
                 from .bubble_refinement import lobe_candidates
-                children = lobe_candidates(rgb, candidate)
                 confirmed = []
-                for child in children:
-                    check_cancel(cancel)
-                    rect = safe_rectangle(child['interior'])
-                    if rect is None or min(rect[2:]) < 20:
-                        break
-                    cx,cy,_,_ = child['box']; child['safe']=[cx+rect[0],cy+rect[1],rect[2],rect[3]]
-                    region_calls += 1
-                    try:
-                        child_words = region_ocr(rgb, child, lang, cancel)
-                    except Cancelled:
-                        raise
-                    except RuntimeError:
-                        break
-                    text = ''.join(v['text'] for v in child_words)
-                    chars = re.findall(r'[\u3041-\u3096\u30a1-\u30fa\u3400-\u9fff]', text)
-                    confidence = sum(v['confidence'] for v in child_words)/max(1,len(child_words))
-                    if len(chars) < 3 or confidence < 85:
-                        break
-                    child['_words'] = child_words; confirmed.append(child)
-                if len(confirmed) == 2:
+                pending = [candidate]
+                while pending and len(confirmed) < 8:
+                    parent = pending.pop(0)
+                    children = lobe_candidates(rgb, parent)
+                    kept = []
+                    for child in children:
+                        check_cancel(cancel)
+                        rect = safe_rectangle(child['interior'])
+                        if rect is None or min(rect[2:]) < 20:
+                            kept = []
+                            break
+                        cx,cy,_,_ = child['box']; child['safe']=[cx+rect[0],cy+rect[1],rect[2],rect[3]]
+                        if region_calls >= 31:
+                            kept = []
+                            break
+                        region_calls += 1
+                        try:
+                            child_words = region_ocr(rgb, child, lang, cancel)
+                        except Cancelled:
+                            raise
+                        except RuntimeError:
+                            kept = []
+                            break
+                        text = ''.join(v['text'] for v in child_words)
+                        chars = re.findall(r'[\u3041-\u3096\u30a1-\u30fa\u3400-\u9fff]', text)
+                        confidence = sum(v['confidence'] for v in child_words)/max(1,len(child_words))
+                        if len(chars) < 3 or confidence < 85:
+                            kept = []
+                            break
+                        child['_words'] = child_words; kept.append(child)
+                    if kept:
+                        pending.extend(kept)  # each lobe may itself be a joined pair
+                    elif parent is not candidate:
+                        confirmed.append(parent)
+                if len(confirmed) >= 2:
                     candidates.extend(confirmed)
                     continue
         ignored -= len(group)
@@ -692,6 +710,11 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
         manifest['hardware']={'profile':runtime_info(),'sessions':dict(SESSION_REPORTS)}
     write_json(out / "manifest.json", manifest)
     return {"manifest": str(out / "manifest.json"), **manifest}
+
+
+def _box_overlap(inner, outer):
+    x,y,w,h=inner;X,Y,W,H=outer
+    return max(0,min(x+w,X+W)-max(x,X))*max(0,min(y+h,Y+H)-max(y,Y))/max(1,w*h)
 
 
 def render_clean(manifest_path, mapping, cancel=None, preview=False):

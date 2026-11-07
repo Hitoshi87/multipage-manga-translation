@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Sửa PDF xuất từ script quá nặng: dùng nén JPEG chất lượng cao, không nhúng thumbnail.
+- Chế độ `coreml` chỉ áp dụng cho model đã kiểm chứng; trước đó ép mọi model qua CoreML làm batch chậm.
+- Cache model Comic Text Mask và chuyển AOT sang device một lần để giảm lag preview.
+- Tách bong bóng nối nhiều phần (từ 3 phần) bằng cắt lồng nhau; chạy cả khi OCR tin cậy cao nhưng bubble chứa nhiều nhóm chữ. Chưa kiểm chứng trên mẫu thật.
+- README viết lại: hướng dẫn cài lần đầu cho Apple Silicon và NVIDIA CUDA, luồng sử dụng, xử lý sự cố.
+- **1107-shadow-0.5**: thêm `engines/role_guard.py` — rào sau clean, giữ nguyên ảnh gốc cho vùng không phải thoại bubble. Chữ tự do (`comic_text_ai` không nằm trong bubble) không được xử lý; ô chữ nhật hoàn hảo mang chữ display dày (banner/logo kiểu "新連載") được hoàn nguyên. Bóng thoại thường và bóng vẽ tay không bị ảnh hưởng. Ngưỡng hiệu chỉnh trên 1 mẫu dương tính duy nhất: cần thêm dữ liệu gán nhãn.
+- Kích hoạt tăng tốc phần cứng NVIDIA CUDA (`CUDAExecutionProvider`, PyTorch CUDA) với fallback CPU; thêm `--accel`/`MANGA_ACCEL=cuda`.
+- `doctor` nhận `models/tessdata` cục bộ và yêu cầu thêm ngôn ngữ `vie`.
+
 ## 1107-ui.4 / 1107-shadow-0.4 — 2026-11-07
 
 - Đưa engine 1107 vào registry có version; preview và clean từ Photoshop dùng cùng handler. Baseline giữ mặc định.

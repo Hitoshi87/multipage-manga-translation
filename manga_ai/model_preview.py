@@ -78,14 +78,23 @@ def detailed_mask(rgb, method, cancel=None, cached_koharu_mask=None):
     return complete_glyphs(rgb, base, detections), detections
 
 
+@lru_cache(maxsize=2)
+def _mask_model(device):
+    import torch
+    return torch.jit.load(str(model_path('mask')), map_location=device).eval()
+
+
 def crop_mask(rgb):
     try:
         import torch
     except ImportError as exc:
         raise RuntimeError('Thiếu PyTorch cho Comic Text Mask. Chạy .venv/bin/python scripts/setup_preview_models.py') from exc
     from .comic_text_ai import detect
-    torch.set_num_threads(2)
-    model = torch.jit.load(str(model_path('mask')), map_location='cpu').eval()
+    from .hardware import get_torch_device
+    device = get_torch_device()
+    if device == 'cpu':
+        torch.set_num_threads(2)
+    model = _mask_model(device)
     h, w = rgb.shape[:2]
     result = np.zeros((h,w), np.uint8)
     # Text proposals are required by this crop model, and can still miss text.
@@ -99,8 +108,11 @@ def crop_mask(rgb):
         left=(384-nw)//2; top=(384-nh)//2
         canvas=np.zeros((384,384,3),np.uint8)
         canvas[top:top+nh,left:left+nw]=cv2.resize(crop,(nw,nh))
+        tensor = torch.from_numpy(np.ascontiguousarray(canvas.transpose(2,0,1)[None]))
+        if device != 'cpu':
+            tensor = tensor.to(device)
         with torch.inference_mode():
-            probability=model(torch.from_numpy(np.ascontiguousarray(canvas.transpose(2,0,1)[None])))[0,0].cpu().numpy()
+            probability=model(tensor)[0,0].cpu().numpy()
         local=cv2.resize(probability[top:top+nh,left:left+nw],(cw,ch))>.5
         result[y0:y1,x0:x1] |= local.astype(np.uint8)
     return result

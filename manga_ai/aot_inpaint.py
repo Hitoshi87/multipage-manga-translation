@@ -94,8 +94,16 @@ def session():
 def infer(rgb, mask):
     """One padded RGB crop; normalization matches the upstream AOT runtime."""
     import torch
+    from .hardware import get_torch_device
+    device = get_torch_device()
     image = torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1)[None])).float()/127.5-1
     tensor_mask = torch.from_numpy(np.ascontiguousarray(mask[None, None])).float()
+    model = session()
+    if device != 'cpu':
+        if next(model.parameters()).device.type != device:
+            model = model.to(device)  # move once, not per crop
+        image = image.to(device)
+        tensor_mask = tensor_mask.to(device)
     with torch.inference_mode():
-        result = session()(image*(1-tensor_mask), tensor_mask)[0].permute(1, 2, 0).numpy()
+        result = model(image*(1-tensor_mask), tensor_mask)[0].permute(1, 2, 0).cpu().numpy()
     return np.clip((result+1)*127.5, 0, 255).astype(np.uint8)

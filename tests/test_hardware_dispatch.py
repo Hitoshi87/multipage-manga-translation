@@ -1,7 +1,7 @@
 import tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
-from manga_ai.hardware import ResilientSession,select_providers,create_session,SESSION_REPORTS
+from manga_ai.hardware import ResilientSession,select_providers,create_session,SESSION_REPORTS,get_torch_device
 
 class FakeSession:
  def __init__(self,providers,fail=False):self.providers=providers;self.fail=fail
@@ -25,6 +25,14 @@ class HardwareDispatchTests(unittest.TestCase):
   self.assertEqual(select_providers('Windows','AMD64',['CUDAExecutionProvider','CPUExecutionProvider'],'ctd')[0],'CUDAExecutionProvider')
   self.assertEqual(select_providers('Linux','x86_64',['CPUExecutionProvider'],'ctd'),['CPUExecutionProvider'])
   self.assertEqual(select_providers('Linux','x86_64',['CUDAExecutionProvider','CPUExecutionProvider'],'ctd','cpu'),['CPUExecutionProvider'])
+  self.assertEqual(select_providers('Linux','x86_64',['CUDAExecutionProvider','CPUExecutionProvider'],'ctd','cuda')[0],'CUDAExecutionProvider')
+  self.assertEqual(select_providers('Linux','x86_64',['CPUExecutionProvider'],'ctd','cuda'),['CPUExecutionProvider'])
+  self.assertEqual(select_providers('Darwin','arm64',['CoreMLExecutionProvider','CPUExecutionProvider'],'balloon','coreml')[0][0],'CoreMLExecutionProvider')
+  self.assertEqual(select_providers('Linux','x86_64',['CPUExecutionProvider'],'ctd','coreml'),['CPUExecutionProvider'])
+  self.assertEqual(select_providers('Darwin','arm64',['CoreMLExecutionProvider','CPUExecutionProvider'],'koharu','coreml'),['CPUExecutionProvider'])
+  with self.assertRaises(ValueError):
+   select_providers('Linux','x86_64',['CPUExecutionProvider'],'ctd','invalid')
+  self.assertEqual(get_torch_device('cpu'),'cpu')
  def test_failed_cuda_initialization_and_inference_retry_on_cpu(self):
   for init in (True,False):
    ort=FakeOrt(init)

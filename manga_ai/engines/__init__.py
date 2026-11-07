@@ -19,7 +19,7 @@ class EngineDescriptor:
 
 _ENGINES={
     'baseline':EngineDescriptor('baseline','baseline-1','Baseline',(),False,'manga_ai.engine','render_clean'),
-    '1107':EngineDescriptor('1107','1107-shadow-0.4','1107 — nền chữ liên tục, kiểm tra clean',('models/balloon.onnx','models/comic_ctd.onnx','models/comic_text_int8.onnx','models/face/animeheadsv3.onnx'),True,'manga_ai.engine_1107','render'),
+    '1107':EngineDescriptor('1107','1107-shadow-0.5','1107 — nền chữ liên tục, kiểm tra clean',('models/balloon.onnx','models/comic_ctd.onnx','models/comic_text_int8.onnx','models/face/animeheadsv3.onnx'),True,'manga_ai.engine_1107','render'),
 }
 
 

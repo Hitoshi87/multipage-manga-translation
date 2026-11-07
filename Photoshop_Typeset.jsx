@@ -66,6 +66,23 @@
         var detectionRow = sourceTab.add('group'); detectionRow.add('statictext', undefined, 'Quét chữ:');
         var detailChoice = detectionRow.add('dropdownlist', undefined, ['Tiêu chuẩn', 'Kỹ — thêm ảnh phóng lớn', 'Kỹ + Koharu — thêm chữ ngoài bóng']); detailChoice.selection = 1;
         detailChoice.helpTip = 'Áp dụng khi scan bằng AI, gồm scan cho preview engine và cả chương. Không cấu hình công cụ thử model riêng.';
+        var hwRow = sourceTab.add('group'); hwRow.add('statictext', undefined, 'Tăng tốc:');
+        var hwChoice = hwRow.add('dropdownlist', undefined, ['Tự động (Auto)', 'CPU (Mát máy / Ổn định)', 'CoreML (Apple Silicon)', 'CUDA (NVIDIA GPU)']); hwChoice.selection = 0;
+        hwChoice.helpTip = 'Chọn phần cứng chạy AI: Auto tự nhận diện; CPU chạy mát máy và tránh tràn RAM/leak bộ nhớ; CoreML cho Mac M-series; CUDA cho card NVIDIA.';
+        var hwSettingsFile = new File(Folder.userData.fsName + '/MangaTypesetterLite/hardware_profile.json');
+        if (hwSettingsFile.exists) {
+            try {
+                var savedHw = MJSON.parse(MTA.read(hwSettingsFile));
+                if (savedHw && typeof savedHw.index === 'number' && savedHw.index >= 0 && savedHw.index < 4) hwChoice.selection = savedHw.index;
+            } catch (_) {}
+        }
+        hwChoice.onChange = function () {
+            try {
+                MTA.mkdir(Folder.userData.fsName + '/MangaTypesetterLite');
+                MTA.write(hwSettingsFile, MJSON.stringify({index: hwChoice.selection.index, value: ['auto', 'cpu', 'coreml', 'cuda'][hwChoice.selection.index]}));
+            } catch (_) {}
+            state = null;
+        };
         var fontRow = typesetTab.add('group'); fontRow.add('statictext', undefined, 'Font thoại:');
         var fontNames = [], fontIds = [];
         for (i = 0; i < app.fonts.length; i++) { fontNames.push(app.fonts[i].name); fontIds.push(app.fonts[i].postScriptName); }
@@ -133,7 +150,7 @@
         var bottom = win.add('group'); bottom.alignment = 'right';
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
-        var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts,
+        var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts,
                         minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, cmykOutput, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         function tick(message, fraction) {
             if (message) status.text = message;
@@ -152,7 +169,13 @@
                 busy = false; syncInputs(); close.enabled = true; win.update();
             }
         }
-        function rpc(payload) { payload.ui_version=MTA.uiVersion; return MTA.request(root, payload, function () { return tick(); }); }
+        function rpc(payload) {
+            payload.ui_version=MTA.uiVersion;
+            if (typeof hwChoice !== 'undefined' && hwChoice && hwChoice.selection) {
+                payload.accel = ['auto', 'cpu', 'coreml', 'cuda'][hwChoice.selection.index];
+            }
+            return MTA.request(root, payload, function () { return tick(); });
+        }
         function currentEngineId(){var e=engineChoice.selection?engines[engineChoice.selection.index]:null;return e?e.id:'baseline';}
         function featureReady(name){return !!(uiFeatures[name] && uiFeatures[name].ready);}
         function modelExperimentReady(){
@@ -901,6 +924,7 @@
                     if (cancelled) break;
                 } finally {
                     if (ownsDoc && doc) doc.close(SaveOptions.DONOTSAVECHANGES);
+                    try { app.purge(PurgeTarget.ALLCACHES); } catch (_) {}
                     if (log.length && log[log.length-1].page === j+1) {
                         log[log.length-1].seconds = Math.round(((new Date()).getTime()-pageStarted)/100)/10;
                         log[log.length-1].ui_version=MTA.uiVersion;

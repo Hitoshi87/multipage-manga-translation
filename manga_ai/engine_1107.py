@@ -19,7 +19,7 @@ from .io import checked_mapping, read_json, validate_manifest, write_json
 from .engine import check_cancel, read_image, render_clean, save_image
 from .coordinates import analysis_image
 
-VERSION='1107-shadow-0.4'
+VERSION='1107-shadow-0.5'
 
 
 def render(manifest_path, mapping, cancel=None, preview=False):
@@ -68,6 +68,9 @@ def render(manifest_path, mapping, cancel=None, preview=False):
         for stale in finish_artifacts.iterdir():
             if stale.is_file() and stale.suffix in ('.png','.json'):stale.unlink()
         clean,mask,finish=finish_page(original,clean,mask,manifest['regions'],selected,ot,heads,[aw,ah],cancel,finish_artifacts)
+        from .engines import role_guard
+        guarded=role_guard.guarded_regions(manifest['regions'],selected,np.asarray(Image.fromarray(original).convert('L')))
+        clean,mask,restored=role_guard.restore_regions(original,clean,mask,manifest['regions'],guarded,selected)
         outside=int((np.any(original!=clean,axis=2)&~mask).sum())
         del original
         if outside:raise RuntimeError('1107 thay đổi pixel ngoài mask')
@@ -77,6 +80,7 @@ def render(manifest_path, mapping, cancel=None, preview=False):
         events=ot['events'];reasons={r['id']:[] for r in manifest['regions'] if r['id'] in selected}
         for event in events:
             if event['region'] in reasons:reasons[event['region']].append({'decision':event['decision'],'reason':event['reason']})
+        for rid,reason in guarded.items():reasons[rid].append({'decision':'ROLE_GUARD_RESTORED','reason':reason,'restored_pixels':restored[rid]})
         for event in finish['events']:
             if event.get('changed_pixels',0):reasons[event['region_id']].append({'decision':'SHADOW_FINISH_REVIEW','reason':'FLAT_TEXT_BACKGROUND_FIELD'})
         artifacts=root/(prefix+'1107_region_masks');artifacts.mkdir(exist_ok=True)
@@ -84,7 +88,7 @@ def render(manifest_path, mapping, cancel=None, preview=False):
         for stage,directory,pattern in [('core',core/'regions','*_mask.png'),('core',core/'regions','*_skip_preview_mask.png'),('general',home/'case/general/pages/page','B*_added_mask.png'),('border',home/'case/border/pages/page','B*_mask.png'),('ownership',dest,'B*_mask.png')]:
             for path in directory.glob(pattern):shutil.copy2(path,artifacts/(stage+'_'+path.name))
         from .hardware import runtime_info, SESSION_REPORTS
-        write_json(trace_out,{'version':VERSION,'selected_ids':sorted(selected),'baseline':base,'core':read_json(trace_path),'general':gt,'border':bt,'ownership':ot,'flat_finish':finish,'flat_finish_artifacts':str(finish_artifacts),'region_reasons':reasons,'region_masks':str(artifacts),'outside_mask_changed':outside,'source_sha256':source_hash,'seconds':round(time.monotonic()-started,2),'hardware':{'profile':runtime_info(),'sessions':dict(SESSION_REPORTS)}})
+        write_json(trace_out,{'version':VERSION,'selected_ids':sorted(selected),'baseline':base,'core':read_json(trace_path),'general':gt,'border':bt,'ownership':ot,'flat_finish':finish,'flat_finish_artifacts':str(finish_artifacts),'region_reasons':reasons,'region_masks':str(artifacts),'role_guard':{'guarded':guarded,'restored_pixels':restored},'outside_mask_changed':outside,'source_sha256':source_hash,'seconds':round(time.monotonic()-started,2),'hardware':{'profile':runtime_info(),'sessions':dict(SESSION_REPORTS)}})
         # Experimental pixels remain review-required even if some were changed.
         applied=[];skipped=sorted(selected);codes={};blocked={}
         for k in skipped:
@@ -92,4 +96,5 @@ def render(manifest_path, mapping, cancel=None, preview=False):
             reason=last.get('reason') or 'UNSPECIFIED';codes[k]='1107_REVIEW_'+str(reason)
             baseline_status='baseline đã tạo mask' if k in base['applied'] else 'baseline bỏ qua'
             blocked[k]='1107: '+baseline_status+'; recovery: '+str(reason)+' — kiểm tra output trước khi dùng'
+            if k in guarded:codes[k]='1107_'+guarded[k];blocked[k]='1107: không phải thoại bubble ('+guarded[k]+') — giữ nguyên ảnh gốc'
         return {'overlay':str(overlay_path),'preview':str(clean_path),'mask':str(mask_path),'trace':str(trace_out),'manifest':str(manifest_path),'applied':applied,'skipped':skipped,'review_ids':skipped.copy(),'blocked':blocked,'skip_reason_codes':codes,'experimental':True,'full_page':True,'mask_pixels':int(mask.sum()),'version':VERSION,'hardware':{'profile':runtime_info(),'sessions':dict(SESSION_REPORTS)}}

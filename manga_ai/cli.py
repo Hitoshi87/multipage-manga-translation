@@ -17,6 +17,10 @@ from .io import import_text, parse_translations, read_json, write_json, import_t
 
 
 def doctor():
+    local_tessdata = Path(__file__).resolve().parent.parent / "models" / "tessdata"
+    if local_tessdata.is_dir() and "TESSDATA_PREFIX" not in os.environ:
+        os.environ["TESSDATA_PREFIX"] = str(local_tessdata)
+
     packages = {name: importlib.util.find_spec(module) is not None for name, module in
                 (("numpy", "numpy"), ("opencv-python-headless", "cv2"),
                  ("Pillow", "PIL"), ("pytesseract", "pytesseract"))}
@@ -27,7 +31,7 @@ def doctor():
         result = subprocess.run([executable, "--list-langs"], capture_output=True, text=True, timeout=15)
         if result.returncode == 0:
             languages = result.stdout.splitlines()[1:]
-    missing_langs = [v for v in ("eng", "jpn", "jpn_vert", "chi_sim", "chi_tra", "kor") if v not in languages]
+    missing_langs = [v for v in ("eng", "jpn", "jpn_vert", "chi_sim", "chi_tra", "kor", "vie") if v not in languages]
     try:
         from .hardware import runtime_info
         hardware=runtime_info()
@@ -44,6 +48,8 @@ def doctor():
 
 
 def dispatch(request):
+    if request.get("accel"):
+        os.environ["MANGA_ACCEL"] = str(request["accel"]).lower()
     operation = request.get("operation")
     if operation == "doctor":
         return doctor()
@@ -99,8 +105,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Manga Typesetter AI — macOS local worker")
     parser.add_argument("--request", type=Path)
     parser.add_argument("--response", type=Path)
+    parser.add_argument("--accel", choices=("auto", "cpu", "coreml", "cuda"), default=None,
+                        help="Chế độ tăng tốc phần cứng: auto, cpu, coreml hoặc cuda")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("doctor")
+    dl = sub.add_parser("download-models", help="Tải hoặc kiểm tra weights model theo profile")
+    dl.add_argument("--profile", choices=["1107", "preview", "assist", "aot"], default="1107")
+    dl.add_argument("--check-only", action="store_true", help="Chỉ kiểm tra offline mà không tải")
     clean = sub.add_parser("clean", help="Tạo overlay từ mapping đã duyệt trong manifest")
     clean.add_argument("manifest", type=Path)
     scan = sub.add_parser("scan", help="Tiền xử lý độc lập; JSX nhập manifest.json")
@@ -113,6 +124,8 @@ def main(argv=None):
     scan.add_argument("--translations", type=Path)
     scan.add_argument("--min-conf", type=float, help=argparse.SUPPRESS)  # legacy CLI compatibility
     args = parser.parse_args(argv)
+    if args.accel:
+        os.environ["MANGA_ACCEL"] = args.accel
     if args.request:
         if not args.response:
             parser.error("--response bắt buộc với --request")
@@ -134,6 +147,14 @@ def main(argv=None):
         report = doctor()
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ready"] else 2
+    if args.command == "download-models":
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from scripts.download_models import main as dl_main
+        dl_argv = ["--profile", args.profile]
+        if not args.check_only:
+            dl_argv.append("--download")
+        return dl_main(dl_argv)
     if args.command == "clean":
         from .engine import render_clean
         manifest = read_json(args.manifest)

@@ -95,6 +95,7 @@ var MTA = (function () {
         var cancel = new File(dir.fsName + '/cancel');
         payload.cancel = cancel.fsName;
         write(input, MJSON.stringify(payload));
+        var accel = payload.accel || 'auto';
         if (windows) {
             // WScript.Shell.Run launches the worker directly without cmd.exe
             // interpolation. WScript expands %ENV%; reject it in paths.
@@ -104,11 +105,12 @@ var MTA = (function () {
             if(!launcher.open('w'))throw Error('Không tạo được launcher Windows.');
             try { launcher.write('Set sh = CreateObject("WScript.Shell")\r\n' +
                 'sh.Environment("PROCESS")("OMP_THREAD_LIMIT") = "1"\r\nsh.Environment("PROCESS")("OPENBLAS_NUM_THREADS") = "1"\r\n' +
+                'sh.Environment("PROCESS")("MANGA_ACCEL") = "' + accel + '"\r\n' +
                 'q = Chr(34)\r\ncmd = q & '+vbLiteral(paths[0])+' & q & " " & q & '+vbLiteral(paths[1])+' & q & " --request " & q & '+vbLiteral(paths[2])+' & q & " --response " & q & '+vbLiteral(paths[3])+' & q\r\nsh.Run cmd, 0, False\r\n'); }
             finally { launcher.close(); }
             app.system('wscript.exe //B "'+launcher.fsName+'"');
         } else {
-            var command = 'OMP_THREAD_LIMIT=1 OPENBLAS_NUM_THREADS=1 ' + shell(python.fsName) + ' ' +
+            var command = 'OMP_THREAD_LIMIT=1 OPENBLAS_NUM_THREADS=1 MANGA_ACCEL=' + shell(accel) + ' ' + shell(python.fsName) + ' ' +
                 shell(root.fsName + '/manga_typesetter.py') + ' --request ' + shell(input.fsName) +
                 ' --response ' + shell(output.fsName) + ' > ' + shell(dir.fsName + '/worker.log') + ' 2>&1 &';
             app.system('/bin/sh -c ' + shell(command));
@@ -124,6 +126,14 @@ var MTA = (function () {
         }
         var response = MJSON.parse(text(output));
         if (!response.ok) throw Error(response.error + '\nLog: ' + dir.fsName + '/worker.log');
+        try {
+            if (input.remove) input.remove();
+            if (output.remove) output.remove();
+            if (cancel.remove) cancel.remove();
+            var logFile = new File(dir.fsName + '/worker.log'); if (logFile.exists && logFile.remove) logFile.remove();
+            var vbsFile = new File(dir.fsName + '/launch.vbs'); if (vbsFile.exists && vbsFile.remove) vbsFile.remove();
+            if (dir.remove) dir.remove();
+        } catch (_) {}
         return response.result;
     }
     function snapshot(doc, folder) {
@@ -439,6 +449,12 @@ var MTA = (function () {
             pdfOpts.preserveEditing = true;
             pdfOpts.layers = true;
             pdfOpts.embedColorProfile = true;
+            // Scripted saves default to uncompressed image data (3-4x larger than
+            // File > Save As). Match the manual dialog: JPEG, no thumbnail.
+            pdfOpts.encoding = PDFEncoding.JPEGHIGH;
+            pdfOpts.jpegQuality = 10;
+            pdfOpts.embedThumbnail = false;
+            pdfOpts.downgradeColorProfile = false;
             doc.saveAs(pdf, pdfOpts, true, Extension.LOWERCASE);
             if (savedFiles) savedFiles.pdf = pdf.fsName;
         }

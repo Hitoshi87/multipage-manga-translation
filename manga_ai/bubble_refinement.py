@@ -144,7 +144,8 @@ def lobe_candidates(rgb, candidate):
     These are only proposals: the caller must confirm strong Japanese OCR in
     BOTH parts before replacing the parent. Ordinary ovals and tails stay whole.
     """
-    if candidate.get('geometry_evidence') or candidate.get('detector') != 'ai_balloon':
+    # Lobes may be split again: a chain of 3+ joined bubbles needs nested cuts.
+    if candidate.get('geometry_evidence') not in (None, 'ai_mask_lobes') or candidate.get('detector') != 'ai_balloon':
         return []
     if candidate.get('detector_confidence', 0) < .9:
         return []

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Explicit pinned model installation; standard-library only, offline check by default."""
 import argparse,hashlib,json,os,re,tempfile,urllib.request
 from pathlib import Path
@@ -34,8 +35,8 @@ def install(item,root,download=False):
  return 'downloaded_and_verified'
 
 
-def main():
- ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--profile',choices=['1107','preview','assist','aot'],default='1107');ap.add_argument('--download',action='store_true',help='Download from upstream; read upstream license terms first');ap.add_argument('--model-dir',type=Path,default=ROOT/'models');a=ap.parse_args();data=json.loads((ROOT/'models/manifest.json').read_text());bad=False
+def main(argv=None):
+ ap=argparse.ArgumentParser(description=__doc__);ap.add_argument('--profile',choices=['1107','preview','assist','aot'],default='1107');ap.add_argument('--download',action='store_true',help='Download from upstream; read upstream license terms first');ap.add_argument('--model-dir',type=Path,default=ROOT/'models');a=ap.parse_args(argv);data=json.loads((ROOT/'models/manifest.json').read_text());bad=False
  for item in data['models']:
   if a.profile not in item['profiles']:continue
   status=install(item,a.model_dir,a.download);print(item['id']+': '+status);bad|=status=='missing_or_invalid'
