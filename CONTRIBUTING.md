@@ -1,6 +1,6 @@
 # Phát triển và kiểm thử
 
-Dùng Python 3.12 và Node.js 22. Cài `requirements.txt` và `requirements-ai.txt` trong virtualenv; unit tests không cần weights. Một số test OCR cần Tesseract và bộ ngôn ngữ Nhật/Trung/Hàn như trong `.github/workflows/tests.yml`.
+Dùng Python 3.12 và Node.js 22. Cài `requirements.txt` và `requirements-ai.txt` trong virtualenv; unit tests không cần weights. Một số test OCR cần Tesseract và bộ ngôn ngữ Anh/Nhật/Trung/Hàn/Việt như trong `.github/workflows/tests.yml`.
 
 ```sh
 python -m unittest discover -s tests -q
