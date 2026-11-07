@@ -114,7 +114,7 @@ python manga_typesetter.py download-models --profile 1107 --check-only   # kiể
 python manga_typesetter.py download-models --profile 1107                # tải về models/
 ```
 
-Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head), kiểm tra kích thước và SHA-256 theo revision được pin. Inference không bao giờ tự tải weights. Các profile `preview`, `assist`, `aot` là tùy chọn. Xem [model manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [notices upstream](models/NOTICE.md).
+Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và model Magi (sắp xếp panel, khoảng **2 GB**, giấy phép phi thương mại), kiểm tra kích thước và SHA-256 theo revision được pin. Magi cần PyTorch và `transformers` đã nằm trong `requirements-ai.txt`; trên NVIDIA hãy cài `torch` bản CUDA trước (bước 5 ở mục 3) rồi mới cài `requirements-ai.txt`. Inference không bao giờ tự tải weights. Các profile `preview`, `assist`, `aot` là tùy chọn. Qwen (nhận diện font) vẫn cài riêng bằng `scripts/setup_heavy_assist.py`. Xem [model manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [notices upstream](models/NOTICE.md).
 
 `requirements*.lock.txt` ghi môi trường đã đo trên Mac; môi trường khác dùng file requirements thường để pip chọn wheel tương thích.
 

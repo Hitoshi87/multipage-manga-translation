@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Đưa Magi vào profile `1107` (manifest có pin SHA-256) và dependency PyTorch/transformers vào `requirements-ai.txt`, để checkbox Magi sẵn sàng sau cài đặt chuẩn. Tải thêm khoảng 2 GB.
 - Sửa PDF xuất từ script quá nặng: nén JPEG, không thumbnail; PDF mặc định flatten, PDF giữ layer (nhúng cả PSD) thành tùy chọn riêng.
 - Chế độ `coreml` chỉ áp dụng cho model đã kiểm chứng; trước đó ép mọi model qua CoreML làm batch chậm.
 - Cache model Comic Text Mask và chuyển AOT sang device một lần để giảm lag preview.

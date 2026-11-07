@@ -170,6 +170,97 @@
         "aot"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_model_safetensors",
+      "path": "magi/model.safetensors",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/model.safetensors",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "b4f77488ed0205e8b74b7373850d06ab7661752688c5e4f28f35095931e97c14",
+      "size_bytes": 2063157440,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_config_json",
+      "path": "magi/config.json",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/config.json",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "d2bba2e467f12843c29837b70a1adf8d9da249107990647764da6f487db18454",
+      "size_bytes": 12937,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_conditional_detr_utils_py",
+      "path": "magi/conditional_detr_utils.py",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/conditional_detr_utils.py",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "867b539a5eb0596670a9747fb340bb4f3f106e0a1034c2dc8f94fee1067b84c7",
+      "size_bytes": 7812,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_configuration_magi_py",
+      "path": "magi/configuration_magi.py",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/configuration_magi.py",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "a86301226fc88cdd4a50ee339551f2824d9bfbde7444954622babe13cd6512b7",
+      "size_bytes": 1672,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_modelling_magi_py",
+      "path": "magi/modelling_magi.py",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/modelling_magi.py",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "b90e7324ac9b7b70ae43a60243b37a9aea2d445e942a62ff9b20307d33566e8f",
+      "size_bytes": 27566,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_processing_magi_py",
+      "path": "magi/processing_magi.py",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/processing_magi.py",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "deaf43ed10be7f3a37272cb3561e7fb6cdeb5b7e7b285e81a660156578d1f8ea",
+      "size_bytes": 14693,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "magi_utils_py",
+      "path": "magi/utils.py",
+      "url": "https://huggingface.co/ragavsachdeva/magi/resolve/15ad498ad45093ad3b833d625728220c6309ad99/utils.py",
+      "revision": "15ad498ad45093ad3b833d625728220c6309ad99",
+      "sha256": "25313e9745f9e37779eb1e643c8c7c24d943a303d29babfa08109575b047a62f",
+      "size_bytes": 15700,
+      "profiles": [
+        "1107",
+        "assist"
+      ],
+      "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     }
   ]
 }
