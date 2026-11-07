@@ -126,7 +126,10 @@
         var png = exportRow.add('checkbox', undefined, 'PNG'), jpg = exportRow.add('checkbox', undefined, 'JPG');
         var formatRow = typesetTab.add('group'); formatRow.add('statictext', undefined, 'Lưu file chỉnh sửa:');
         var savePsd = formatRow.add('checkbox', undefined, 'PSD'); savePsd.value = true;
-        var savePdf = formatRow.add('checkbox', undefined, 'Photoshop PDF (giữ layer)');
+        var savePdf = formatRow.add('checkbox', undefined, 'PDF (gọn, flatten)');
+        savePdf.helpTip = 'PDF nén JPEG, không giữ layer — dung lượng gần lưu tay. Cần chỉnh sửa lại thì dùng PSD.';
+        var pdfLayers = formatRow.add('checkbox', undefined, 'PDF giữ layer (rất nặng)');
+        pdfLayers.helpTip = 'Nhúng toàn bộ PSD vào PDF nên file có thể lớn gấp nhiều lần. Chỉ bật khi thật sự cần.';
         var cmykOutput = typesetTab.add('checkbox', undefined, 'Xuất PSD/PDF/JPG CMYK theo Color Settings của Photoshop'); cmykOutput.value = true;
         cmykOutput.helpTip = 'Chọn profile CMYK phù hợp nhà in trong Photoshop Color Settings trước khi dùng. PNG xem trước vẫn xuất RGB.';
         var alreadyClean = engineTab.add('checkbox', undefined, 'Trang đã clean thủ công — chỉ tạo chữ, không thêm lớp clean tự động');
@@ -151,7 +154,7 @@
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
         var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts,
-                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, cmykOutput, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
+                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, cmykOutput, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         function tick(message, fraction) {
             if (message) status.text = message;
             if (fraction !== undefined) progress.value = fraction;
@@ -624,7 +627,7 @@
                 try { s.outputColorProfile=copy.colorProfileName; } catch (_) {}
                 if (!tick('Chuẩn bị lưu…', 95)) throw Error('Đã hủy trước khi lưu');
                 s.savedFiles = {};
-                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, png: png.value, jpg: jpg.value, cmykJpeg:cmykOutput.value}, onlyClean ? 'clean' : 'typeset', s.savedFiles) : null;
+                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:cmykOutput.value}, onlyClean ? 'clean' : 'typeset', s.savedFiles) : null;
                 if (!keepOpen) { copy.close(SaveOptions.DONOTSAVECHANGES); copy = null; }
                 tick((s.manualText.length ? 'Vùng cần clean/duyệt: '+s.manualText.length+'. ' : '') + (saved ? 'Đã lưu: ' + saved.fsName : 'Đã tạo bản sao CLEAN') + MTA.cleanResultSummary(result), 100);
                 return saved ? saved.fsName : '';

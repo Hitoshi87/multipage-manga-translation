@@ -446,8 +446,11 @@ var MTA = (function () {
         }
         if (savePdf) {
             var pdfOpts = new PDFSaveOptions();
-            pdfOpts.preserveEditing = true;
-            pdfOpts.layers = true;
+            // Layered PDF embeds the whole PSD (lossless pixels), so JPEG settings
+            // below only shrink the composite. Default to a flattened PDF.
+            var keepLayers = exports.pdfLayers === true;
+            pdfOpts.preserveEditing = keepLayers;
+            pdfOpts.layers = keepLayers;
             pdfOpts.embedColorProfile = true;
             // Scripted saves default to uncompressed image data (3-4x larger than
             // File > Save As). Match the manual dialog: JPEG, no thumbnail.

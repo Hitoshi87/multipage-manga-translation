@@ -167,7 +167,8 @@ Batch nhiều trang: script tự gọi `app.purge(PurgeTarget.ALLCACHES)` sau m�
 ## 8. Xuất file và dung lượng
 
 - **PSD**: giữ layer, nhúng profile màu.
-- **Photoshop PDF**: giữ layer và dữ liệu chỉnh sửa; ảnh nén JPEG chất lượng cao, không nhúng thumbnail, để dung lượng gần với lưu tay. PDF giữ layer vẫn nặng hơn PDF đã flatten vì nhúng cả dữ liệu PSD.
+- **PDF (gọn, flatten)**: mặc định, nén JPEG chất lượng cao, không nhúng thumbnail, không giữ layer; dung lượng gần với lưu tay. Cần chỉnh sửa thì dùng PSD.
+- **PDF giữ layer**: tùy chọn riêng, nhúng toàn bộ PSD nên rất nặng (có thể hàng chục MB mỗi trang).
 - **JPEG**: flatten, chất lượng 10; **PNG**: RGB.
 
 ## 9. Engine 1107 làm gì

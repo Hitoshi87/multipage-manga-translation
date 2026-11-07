@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Sửa PDF xuất từ script quá nặng: dùng nén JPEG chất lượng cao, không nhúng thumbnail.
+- Sửa PDF xuất từ script quá nặng: nén JPEG, không thumbnail; PDF mặc định flatten, PDF giữ layer (nhúng cả PSD) thành tùy chọn riêng.
 - Chế độ `coreml` chỉ áp dụng cho model đã kiểm chứng; trước đó ép mọi model qua CoreML làm batch chậm.
 - Cache model Comic Text Mask và chuyển AOT sang device một lần để giảm lag preview.
 - Tách bong bóng nối nhiều phần (từ 3 phần) bằng cắt lồng nhau; chạy cả khi OCR tin cậy cao nhưng bubble chứa nhiều nhóm chữ. Chưa kiểm chứng trên mẫu thật.
