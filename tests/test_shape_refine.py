@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from manga_ai.shape_refine import attach_refined_shapes, refine_shape
+from manga_ai.clean_layers import protect_opaque_balloons
 
 
 def page(draw):
@@ -32,6 +33,37 @@ def mask_rows(box, shift_right_cut=0, inset=12):
 
 
 class ShapeRefineTests(unittest.TestCase):
+    def test_pale_artwork_leak_is_not_a_white_balloon(self):
+        gray=np.full((400,500),210,np.uint8)
+        cv2.ellipse(gray,(280,200),(120,140),0,0,360,255,-1)
+        cv2.ellipse(gray,(280,200),(120,140),0,0,360,20,3)
+        gray[195:206,155:165]=210  # pale gap connects exterior only at threshold 200
+        # Detector box incorrectly includes the pale artwork to the left.
+        shape=refine_shape(gray,{'box':[90,55,315,290]},None)
+        self.assertIsNotNone(shape)
+        self.assertGreaterEqual(shape['brightness'],220)
+        self.assertGreater(shape['box'][0],155)
+
+    def test_clean_overlay_cannot_erase_pale_artwork_outside_true_bubble(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);gray=np.full((400,500),210,np.uint8)
+            cv2.ellipse(gray,(280,200),(120,140),0,0,360,255,-1)
+            cv2.ellipse(gray,(280,200),(120,140),0,0,360,20,3)
+            gray[195:206,155:165]=210
+            Image.fromarray(gray).save(root/'original.png')
+            overlay=np.zeros((400,500,4),np.uint8)
+            overlay[180:190,110:120]=[255,255,255,255]  # incorrect clean on artwork
+            overlay[180:190,260:270]=[255,255,255,255]  # real text in balloon
+            Image.fromarray(overlay).save(root/'overlay.png')
+            region={'id':'B001','box':[90,55,315,290],'detector':'ai_balloon','auto_clean':True}
+            result={'overlay':str(root/'overlay.png'),'applied':['B001']}
+            shape=protect_opaque_balloons(result,root/'manifest.json',{'B001':region})
+            saved=np.asarray(Image.open(root/'overlay.png'))
+            self.assertIn('B001',shape)
+            self.assertEqual(int(saved[180:190,110:120,3].sum()),0)
+            self.assertEqual(int(saved[180:190,260:270,3].sum()),25500)
+            self.assertEqual(result['geometry_clipped']['B001'],100)
+            self.assertIn('B001',result['review_ids'])
     def test_a_mask_cut_short_on_the_right_is_measured_back_to_the_real_balloon(self):
         gray = page(lambda g: None)
         box = balloon(gray)

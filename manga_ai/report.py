@@ -21,6 +21,7 @@ REASONS = {
     'clean_skipped': (FIX, 'Chưa xoá được chữ gốc ở bong bóng này'),
     'manual_text': (FIX, 'Chữ đang ẩn, cần xoá chữ gốc bằng tay'),
     'layout_fallback': (FIX, 'Chữ không vừa khung nên đang đặt tạm'),
+    'geometry_clipped': (LOOK, 'Vùng xoá vượt lòng bong bóng; phần vượt đã được giữ lại, cần kiểm tra chữ sót'),
     'lettering_needs_review': (LOOK, 'Có đề xuất rút gọn cần đối chiếu nghĩa trước khi dùng'),
     'merged_suspect': (FIX, 'Nghi hai bong bóng bị gộp thành một'),
     'not_translated': (FIX, 'Chưa có bản dịch cho vùng này'),
@@ -74,6 +75,8 @@ def collect_items(log, texts):
             add(region, 'clean_skipped')
         for region in page.get('manual_text', []):
             add(region, 'manual_text')
+        for region in page.get('geometry_clipped', {}):
+            add(region, 'geometry_clipped')
         for entry in page.get('layout_fallback', []):
             add(entry['id'] if isinstance(entry, dict) else entry, 'layout_fallback')
         for region in page.get('art_inpaint_review', []):

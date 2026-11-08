@@ -37,15 +37,14 @@ def _rows_area(rows):
     return sum(r[2] - r[1] for r in rows)
 
 
-def refine_shape(gray, region, mask_shape):
-    """Return a shape dict measured from the cleaned page, or None when it cannot be trusted."""
+def _refine_shape(gray, region, mask_shape, brightness, inset_override=None):
     x, y, w, h = region['box']
     height, width = gray.shape
     x0, y0, x1, y1 = max(0, x - PAD), max(0, y - PAD), min(width, x + w + PAD), min(height, y + h + PAD)
     crop = gray[y0:y1, x0:x1]
     if crop.size == 0 or w < 20 or h < 20:
         return None
-    count, labels, stats, _ = cv2.connectedComponentsWithStats((crop >= BRIGHT).astype(np.uint8), 4)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats((crop >= brightness).astype(np.uint8), 4)
     if count < 2:
         return None
     # The component that holds the old text area: the one overlapping the mask (or the box centre) most.
@@ -75,7 +74,7 @@ def refine_shape(gray, region, mask_shape):
     share = filled.sum() / float(w * h)
     if not .35 <= share <= .95:
         return None
-    inset = max(5, min(12, round(min(w, h) * .045)))
+    inset = inset_override if inset_override is not None else max(5, min(12, round(min(w, h) * .045)))
     inner = cv2.erode(filled, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * inset + 1, 2 * inset + 1)))
     rows = []
     for row in range(inner.shape[0]):
@@ -100,6 +99,16 @@ def refine_shape(gray, region, mask_shape):
     right = max(r[2] for r in rows)
     return {'rows': rows, 'center': [(left + right) / 2, (rows[0][0] + rows[-1][0] + 1) / 2],
             'box': [left, rows[0][0], right - left, rows[-1][0] - rows[0][0] + 1], 'source': 'cleaned_pixels'}
+
+
+def refine_shape(gray, region, mask_shape, inset=None):
+    """Try stricter brightness when pale artwork leaks into the white component."""
+    for brightness in (BRIGHT, 220, 235):
+        shape = _refine_shape(gray, region, mask_shape, brightness, inset)
+        if shape is not None:
+            shape['brightness'] = brightness
+            return shape
+    return None
 
 
 def attach_refined_shapes(result, manifest_path, regions_by_id):

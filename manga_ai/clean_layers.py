@@ -129,12 +129,73 @@ def attach_from_manifest(result, manifest_path):
         # Flatten the paper first, so the per-bubble layers and the measured shapes use the final overlay.
         from .paper_finish import finish_result
         finish_result(result, manifest_path, regions)
+        original_shapes = protect_opaque_balloons(result, manifest_path, regions)
         attach_region_layers(result, manifest_path, regions)
         # Balloon extents measured from the cleaned page, for centring the lettering (never raises).
         from .shape_refine import attach_refined_shapes
         attach_refined_shapes(result, manifest_path, regions)
+        # The unmodified source cannot have been enlarged by a mistaken clean.
+        result.setdefault('refined_shapes', {}).update(original_shapes)
         return result
     except Exception as exc:
         result['layer_split'] = 'single'
         result['layer_split_error'] = str(exc)[:160]
         return result
+
+
+def protect_opaque_balloons(result, manifest_path, regions_by_id):
+    """Clip clean pixels to an independently measured original white interior.
+
+    Only ordinary opaque AI balloons with an independently closed bright region
+    are handled. If measurement is inconclusive, leave the existing engine path
+    alone. Any removed pixels require review because some may have been text.
+    """
+    from .shape_refine import refine_shape
+    overlay_path=result.get('overlay')
+    if not overlay_path:
+        return {}
+    ids=list(dict.fromkeys(result.get('applied', [])))
+    eligible=[regions_by_id[rid] for rid in ids if rid in regions_by_id
+              and regions_by_id[rid].get('detector')=='ai_balloon'
+              and regions_by_id[rid].get('auto_clean') is True
+              and rid not in result.get('art_inpaint_ids', [])]
+    if not eligible:
+        return {}
+    root=Path(manifest_path).resolve().parent
+    with Image.open(root/'original.png') as image:
+        gray=np.asarray(image.convert('L'))
+    with Image.open(overlay_path) as image:
+        overlay=np.asarray(image.convert('RGBA')).copy()
+    if overlay.shape[:2] != gray.shape:
+        return {}
+    shapes={}; clipped={}
+    for region in eligible:
+        x,y,w,h=region['box'];rid=region['id']
+        # Do not remove another region's pixels in overlapping detector boxes.
+        if any(other['id'] != rid and max(x,other['box'][0]) < min(x+w,other['box'][0]+other['box'][2])
+               and max(y,other['box'][1]) < min(y+h,other['box'][1]+other['box'][3])
+               for other in regions_by_id.values()):
+            continue
+        shape=refine_shape(gray,region,None)
+        if not shape:
+            continue
+        # Lettering needs a wide margin; clean only needs to stay just inside
+        # the ink outline, otherwise glyphs near the edge would be left behind.
+        clean_shape=refine_shape(gray,region,None,inset=2)
+        if not clean_shape:
+            continue
+        shape['source']='original_pixels';shapes[rid]=shape
+        x0,y0=max(0,x),max(0,y);x1,y1=min(gray.shape[1],x+w),min(gray.shape[0],y+h)
+        allowed=np.zeros((y1-y0,x1-x0),np.uint8)
+        for yy,left,right in clean_shape['rows']:
+            if y0<=yy<y1:
+                allowed[yy-y0,max(0,left-x0):min(x1-x0,right-x0)]=1
+        target=overlay[y0:y1,x0:x1]
+        outside=(target[:,:,3]>0)&(allowed==0)
+        if outside.any():
+            clipped[rid]=int(outside.sum());target[outside]=0
+    if clipped:
+        Image.fromarray(overlay,'RGBA').save(overlay_path)
+        result['geometry_clipped']=clipped
+        result['review_ids']=list(dict.fromkeys(result.get('review_ids',[])+list(clipped)))
+    return shapes
