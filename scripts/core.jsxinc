@@ -69,6 +69,26 @@ var MTA = (function () {
         return folder;
     }
     function unique() { serial++; return (new Date()).getTime() + '_' + serial; }
+    // Keep project state tied to the selected input and its current files, even
+    // when multiple folders share one output directory. Sort for stable resume.
+    function sourceProjectKey(folder, files) {
+        var entries=[], i, f, modified;
+        for(i=0;i<files.length;i++){
+            f=files[i];modified=f.modified;
+            entries.push(String(f.fsName||f.name)+'\u0000'+String(f.length||0)+'\u0000'+
+                         String(modified && modified.getTime ? modified.getTime() : 0));
+        }
+        entries.sort();
+        var value=String(folder)+'\u0000'+entries.join('\u0001'), a=2166136261, b=2246822519;
+        for(i=0;i<value.length;i++){
+            a^=value.charCodeAt(i);a=(a+(a<<1)+(a<<4)+(a<<7)+(a<<8)+(a<<24))>>>0;
+            b^=value.charCodeAt(i);b=(b+(b<<1)+(b<<4)+(b<<7)+(b<<8)+(b<<24))>>>0;
+        }
+        return ('00000000'+a.toString(16)).slice(-8)+('00000000'+b.toString(16)).slice(-8);
+    }
+    function automaticClickAllowed(running,lastAction,lastEnd,action,now) {
+        return !running && !(lastAction===action && now-lastEnd<1500);
+    }
     function confirmChapter(rows, mode, reviewMode) {
         var dlg = new Window('dialog', 'Xác nhận thứ tự chương');
         dlg.orientation = 'column'; dlg.alignChildren = 'fill';
@@ -769,6 +789,6 @@ var MTA = (function () {
         }
         return savePsd ? psd : pdf;
     }
-    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, confirmChapter: confirmChapter, shell: shell, request: request,
+    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
             snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

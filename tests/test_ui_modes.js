@@ -78,7 +78,7 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
 // and the engine and the output folder are choices the user can see.
 {
   assert(source.includes("operation:'translation_env_check'"));
-  assert(source.indexOf('var chk=easyEnvCheck();')<source.indexOf('var count=easyFiles().length'),'environment is checked before any work');
+  assert(source.indexOf('var chk=easyEnvCheck();')<source.indexOf('var inputFiles=easyFiles()'),'environment is checked before any work');
   for(const label of ['Engine xoá chữ:','Kiểm tra môi trường','Đổi thư mục lưu kết quả','Sẽ chạy:'])assert(source.includes(label),label);
   assert(source.includes("var out=MTA.mkdir(easyOutFolder().fsName)"));
   assert(source.includes('easyEngineChoice.selection?easyEngineChoice.selection.index:0'));
@@ -87,8 +87,30 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
 
 // One click, one run; PDF size choices are visible; lettering uses the refined balloon when present.
 {
-  assert(source.includes('if(easyRunning||(new Date()).getTime()-easyLastEnd<1500)return;'),'a queued second click must not start a second run');
-  assert(source.includes('easyRunning=false;easyLastEnd=(new Date()).getTime();'));
+  assert.strictEqual(ctx.MTA.automaticClickAllowed(false,true,1000,false,1200),true,'start after sample is a distinct user action');
+  assert.strictEqual(ctx.MTA.automaticClickAllowed(false,true,1000,true,1200),false,'duplicate sample click is suppressed');
+  assert.strictEqual(ctx.MTA.automaticClickAllowed(true,true,1000,false,3000),false,'no overlapping runs');
+  assert.strictEqual(ctx.MTA.automaticClickAllowed(false,true,1000,true,2600),true,'later retry is allowed');
+  assert(source.includes('inputFolder=f;sourceInfo.text=f.fsName'), 'automatic folder also feeds the chapter button');
+  assert(source.includes('syncEasyFolder(selected)'), 'the chapter folder also updates the automatic tab');
+  const chosen={fsName:'/manga/new',name:'new'};
+  const folderCtx={easyChoose:{},sourceInfo:{},Folder:{selectDialog:()=>chosen},syncEasyFolder:f=>{folderCtx.easyFolder=f;}};
+  vm.createContext(folderCtx);
+  vm.runInContext(source.slice(source.indexOf('        easyChoose.onClick='),source.indexOf('        easyReport.onClick=')),folderCtx);
+  folderCtx.easyChoose.onClick();
+  assert.strictEqual(folderCtx.inputFolder,chosen,'selecting automatic input updates the folder consumed by chapter');
+  assert.strictEqual(folderCtx.easyFolder,chosen);
+  const file=(name,size,modified)=>({fsName:name,length:size,modified:new Date(modified)});
+  const inputs=[file('/a/001.png',100,1000),file('/a/002.png',200,2000)];
+  const key=ctx.MTA.sourceProjectKey('/a',inputs);
+  assert.strictEqual(key,ctx.MTA.sourceProjectKey('/a',inputs.slice().reverse()),'input order does not change project identity');
+  assert.notStrictEqual(key,ctx.MTA.sourceProjectKey('/b',inputs),'different input folder uses a separate project');
+  assert.notStrictEqual(key,ctx.MTA.sourceProjectKey('/a',[inputs[0],file('/a/002.png',201,2000)]),'changed inputs use a separate project');
+  assert.notStrictEqual(key,ctx.MTA.sourceProjectKey('/a',[inputs[0],file('/a/002.png',200,3000)]),'modified files use a separate project');
+  assert(source.includes("'/project_'+sourceKey+'.json'"),'full volume is scoped to its source files');
+  assert(!source.includes('if(pf.exists)pf.remove()'),'sample runs do not erase existing projects');
+  assert(source.includes('Chưa chạy cả tập.'),'sample-only completion must not imply the chapter already started');
+  assert(source.includes('openReview(projectFile.fsName,out)'),'review opens the current input project');
   assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
   // Export colour is an explicit choice (keep / RGB / CMYK), never a hard-set CMYK.
   assert(!source.includes('cmykOutput'),'the hard-set CMYK checkbox is gone');
