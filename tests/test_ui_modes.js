@@ -43,6 +43,21 @@ assert.strictEqual(requests[0].engine_id,'1107');assert.strictEqual(requests[0].
 assert.strictEqual(requests[0].mapping[0].clean,false);assert.strictEqual(requests[0].mapping[1].clean,true);
 assert(requests[0].mapping.every(m=>!m.force));assert(shown);
 // No two overlapping review checkboxes remain.
-assert(!source.includes('batchForce'));assert.strictEqual((source.match(/addTab\('/g)||[]).length,4);
-for(const title of ['1. Nguồn & nhận diện','2. Engine clean','3. Typeset & xuất','4. Thử nghiệm nâng cao'])assert(source.includes(title));
+assert(!source.includes('batchForce'));assert.strictEqual((source.match(/addTab\('/g)||[]).length,5);
+for(const title of ['Tự động (khuyên dùng)','1. Nguồn & nhận diện','2. Engine clean','3. Typeset & xuất','4. Thử nghiệm nâng cao'])assert(source.includes(title));
+assert(source.indexOf("addTab('Tự động")<source.indexOf("addTab('1. Nguồn"),'the automatic tab must come first');
+assert(source.includes('tabs.selection=easyTab'));
+// Host, model name and API key are three separate editable fields; the key is masked and never remembered on screen.
+for(const label of ['Host (địa chỉ API):','Tên model:','API key:'])assert(source.includes(label),label);
+assert(source.includes("easyKey=easyKeyRow.add('edittext',undefined,'',{noecho:true})"));
+assert(source.includes('p.base_url=easyHost.text;p.model=easyModelName.text;'));
+assert(!source.includes('easyKeyButton'),'the key dialog button was replaced by the key field');
+assert(source.includes("easyKey.text='';"),'the key is cleared from the field once saved');
+// The main output is one layered Adobe Photoshop PDF per page; PSD is optional and off by default.
+assert(source.includes('savePdf.value=true;pdfLayers.value=true;savePsd.value=easyKeepPsd.value===true;'));
+assert(source.includes('easyKeepPsd.value=false'));
+assert(source.includes("chooseFontById(font,'Pangolin-Regular')"),'automatic tab picks an installed comic font');
+// Line spacing is Auto by default; the number is used only when Auto is unticked.
+assert(source.includes("leadingAuto.value = true"));
+assert(source.includes('autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.05 : Number(leading.text)'));
 console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, dependencies, one review toggle and real preview dispatch PASS');

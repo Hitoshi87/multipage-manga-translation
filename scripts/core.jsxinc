@@ -152,7 +152,187 @@ var MTA = (function () {
         var b = layer.bounds;
         return [b[0].as('px'), b[1].as('px'), b[2].as('px'), b[3].as('px')];
     }
+    function addWhiteStroke(doc, layer, pixels) {
+        // New text layers only; preserves editable text. If this Photoshop
+        // version rejects layer effects, the caller records a review issue.
+        try {
+            app.activeDocument=doc;doc.activeLayer=layer;
+            var id=charIDToTypeID, action=new ActionDescriptor(), ref=new ActionReference();
+            ref.putProperty(id('Prpr'),id('Lefx'));ref.putEnumerated(id('Lyr '),id('Ordn'),id('Trgt'));
+            action.putReference(id('null'),ref);
+            var effects=new ActionDescriptor(), stroke=new ActionDescriptor(), color=new ActionDescriptor();
+            effects.putUnitDouble(id('Scl '),id('#Prc'),100);
+            stroke.putBoolean(id('enab'),true);
+            stroke.putEnumerated(id('Styl'),id('FStl'),id('OutF'));
+            stroke.putEnumerated(id('PntT'),id('FrFl'),id('SClr'));
+            stroke.putEnumerated(id('Md  '),id('BlnM'),id('Nrml'));
+            stroke.putUnitDouble(id('Opct'),id('#Prc'),100);
+            stroke.putUnitDouble(id('Sz  '),id('#Pxl'),pixels);
+            color.putDouble(id('Rd  '),255);color.putDouble(id('Grn '),255);color.putDouble(id('Bl  '),255);
+            stroke.putObject(id('Clr '),id('RGBC'),color);effects.putObject(id('FrFX'),id('FrFX'),stroke);
+            action.putObject(id('T   '),id('Lefx'),effects);executeAction(id('setd'),action,DialogModes.NO);
+            return true;
+        } catch (_) { return false; }
+    }
+    // Pure layout planner (no Photoshop calls): unitWidth(str) is the width of a
+    // string at size 1, refRatio the line ink height per size. It finds the
+    // largest size at which some line count and block shift fit the shape.
+    function planLayout(shape, paragraphs, unitWidth, refRatio, o) {
+        var rows={}, area=0, i, cx0=shape.center[0], cy0=shape.center[1], maxWidth=0;
+        for(i=0;i<shape.rows.length;i++){rows[shape.rows[i][0]]=shape.rows[i];area+=shape.rows[i][2]-shape.rows[i][1];maxWidth=Math.max(maxWidth,shape.rows[i][2]-shape.rows[i][1]);}
+        // Vertical centre of the balloon body: rows at least half as wide as the
+        // widest row, so a tail or a pointed end does not drag the centre away.
+        var bodyTop=Infinity,bodyBottom=-Infinity;
+        for(i=0;i<shape.rows.length;i++)if(shape.rows[i][2]-shape.rows[i][1]>=maxWidth*.5){bodyTop=Math.min(bodyTop,shape.rows[i][0]);bodyBottom=Math.max(bodyBottom,shape.rows[i][0]+1);}
+        if(bodyBottom>bodyTop)cy0=(bodyTop+bodyBottom)/2;
+        // Horizontal centre of the same body rows, weighted by row width, so a
+        // reported centroid dragged by a tail does not decide where text sits.
+        var weighted=0,weights=0;
+        for(i=0;i<shape.rows.length;i++){var rw=shape.rows[i][2]-shape.rows[i][1];if(rw>=maxWidth*.5){weighted+=(shape.rows[i][1]+shape.rows[i][2])/2*rw;weights+=rw;}}
+        if(weights>0)cx0=weighted/weights;
+        // Free interval of rows [top,bottom): the text may sit anywhere inside it.
+        function span(top,bottom){
+            var lo=Math.floor(top),hi=Math.ceil(bottom),left=-Infinity,right=Infinity,r;
+            if(hi<=lo)return null;
+            for(var y=lo;y<hi;y++){r=rows[y];if(!r)return null;if(r[1]>left)left=r[1];if(r[2]<right)right=r[2];}
+            return right>left?[left,right]:null;
+        }
+        var total=0;
+        for(i=0;i<paragraphs.length;i++)total+=unitWidth(paragraphs[i].replace(/^\s+|\s+$/g,''));
+        var bw=shape.box[2],bh=shape.box[3],stepY=Math.max(1,bh*.01),shifts=[],b;
+        // Text stays optically centred: shrink the size before moving it far.
+        for(b=-3;b<=3;b++)shifts.push(b*stepY);
+        shifts.sort(function(p,q){return Math.abs(p)-Math.abs(q);});
+        // One text layer has one centre axis. Lines are wrapped to each row's free
+        // width, then the axis is the point nearest the shape centre that keeps
+        // every line inside its own row (notched/offset bubbles may need it moved).
+        function tryAt(size,n,dy){
+            // Optical centring: centre the cap-height core (x-height..baseline of
+            // the first and last line), not the full ink box with accents/descenders.
+            var rh=refRatio*size, lead=size*o.leading, acc=(o.accRatio!==undefined?o.accRatio:refRatio*.78)*size, cap=(o.capRatio!==undefined?o.capRatio:refRatio*.56)*size;
+            var top0=cy0+dy-acc-(n-1)*lead/2+cap/2, spans=[], widths=[], sum=0, row;
+            for(row=0;row<n;row++){
+                var sp=span(top0+row*lead,top0+row*lead+rh);
+                if(!sp||sp[1]-sp[0]-4<=0)return null;
+                spans.push(sp);widths.push(sp[1]-sp[0]-4);sum+=widths[row];
+            }
+            var wrapped=wrapScored(paragraphs,widths,function(t){return t?unitWidth(t)*size:0;});
+            if(!wrapped)return null;
+            var lines=wrapped.lines;
+            var used=0,lo=-Infinity,hi=Infinity;
+            for(row=0;row<lines.length;row++){
+                var w=unitWidth(lines[row])*size;used+=w;
+                lo=Math.max(lo,spans[row][0]+2+w/2);hi=Math.min(hi,spans[row][1]-2-w/2);
+            }
+            if(lo>hi)return null;
+            var axis=Math.min(hi,Math.max(lo,cx0));
+            // Hard limit: text may sit at most 5% of the width off the balloon centre.
+            if(Math.abs(axis-cx0)>.05*bw)return null;
+            var fillValue=used*rh/Math.max(1,area);
+            // Prefer more lines (and so a fuller balloon) when the text would otherwise swim in white.
+            var sparse=(o.fillWeight!==undefined?o.fillWeight:5)*Math.max(0,(o.fillTarget!==undefined?o.fillTarget:.38)-fillValue);
+            return {size:size,lines:lines,dx:axis-cx0,dy:dy,axis:axis,cy:cy0+dy,top:top0,baseline:top0+acc,rh:rh,lead:lead,usage:used/sum,quality:wrapped.cost/2.5+3*Math.abs(axis-cx0)/Math.max(1,bw)+3*Math.abs(dy)/Math.max(1,bh)+sparse,fill:fillValue};
+        }
+        function feasible(size){
+            var lead=size*o.leading;
+            var maxLines=Math.min(24,Math.floor(bh/lead)+1),nmin=Math.max(1,Math.floor(total*size/Math.max(1,bw)));
+            for(var s=0;s<shifts.length;s++){
+                var best=null;
+                for(var n=nmin;n<=Math.min(maxLines,nmin+Math.max(4,Math.ceil(nmin*.6)));n++){
+                    var c=tryAt(size,n,shifts[s]);
+                    if(c && (!best||c.quality<best.quality))best=c;
+                }
+                if(best)return best;
+            }
+            return null;
+        }
+        var best=feasible(o.min);if(!best)return null;
+        var top=feasible(o.max);
+        if(top)best=top;
+        else{
+            var low=o.min,high=o.max;
+            while(high-low>=.5){var mid=(low+high)/2,r=feasible(mid);if(r){best=r;low=mid;}else high=mid;}
+        }
+        // Smoothness: a slightly smaller size often allows far nicer line breaks.
+        // Accept it only when the readability gain outweighs the size loss.
+        var fit=best,bestScore=best.quality,factors=[.97,.94,.91,.88,.85,.82,.79,.76,.73,.70,.67,.64,.61,.58];
+        for(var fi=0;fi<factors.length;fi++){
+            var trySize=fit.size*factors[fi];
+            if(trySize<o.min)break;
+            var alt=feasible(trySize);
+            if(alt){var score=alt.quality+1.2*(1-factors[fi]);if(score<bestScore){best=alt;bestScore=score;}}
+        }
+        // A balloon that is still mostly empty may exceed the page cap a little.
+        if(!o._boosted && o.sparseBoost>1 && best.fill<(o.sparseFill||0)){
+            var o2={},k;for(k in o)o2[k]=o[k];o2.max=o.max*o.sparseBoost;o2._boosted=true;
+            var bigger=planLayout(shape,paragraphs,unitWidth,refRatio,o2);
+            if(bigger && bigger.size>best.size && bigger.fill>best.fill)best=bigger;
+        }
+        return best;
+    }
+    // Page-level size cap: bubbles fit to their own shape first, then no bubble
+    // may exceed factor x the page median, so short lines do not become huge.
+    function pageSizeCap(sizes, factor, minSize) {
+        if(!sizes.length)return undefined;
+        var sorted=sizes.slice(0).sort(function(a,b){return a-b;});
+        return Math.max(minSize,factor*sorted[Math.floor((sorted.length-1)/2)]);
+    }
+    var lastLayoutInfo=null;
+    function rectShape(box){
+        var rows=[],y0=Math.floor(box[1]),y1=Math.ceil(box[1]+box[3]);
+        for(var y=y0;y<y1;y++)rows.push([y,box[0],box[0]+box[2]]);
+        return {box:box,center:[box[0]+box[2]/2,box[1]+box[3]/2],rows:rows};
+    }
+    // Display-only clean-up: Japanese brackets, decorative marks and full-width forms
+    // are missing from Latin comic fonts and render as boxes. The saved translation
+    // is untouched. normalizeText also applies the lettering conventions (one
+    // ellipsis per bubble, none leading, capitalised sentences); it mirrors
+    // manga_ai/translation/textnorm.py and shares tests/fixtures/textnorm_cases.json.
+    function normalizeQuotes(text) {
+        return String(text)
+            .replace(/[\u300c\u300e]/g,'\u201c').replace(/[\u300d\u300f]/g,'\u201d')
+            .replace(/\uff01/g,'!').replace(/\uff1f/g,'?')
+            .replace(/[\u2661\u2665\u266a\u266b]+/g,'~').replace(/[\u2605\u2606]+/g,'')
+            .replace(/([^\s(\u201c\u2018\n\r])\u201c/g,'$1 \u201c')
+            .replace(/\u201d([^\s.,!?\u2026;:)\u201d\u2019\n\r])/g,'\u201d $1');
+    }
+    var LETTER=/[A-Za-z\u00c0-\u024f\u1e00-\u1eff\u0300-\u036f]/;
+    function tidyEllipses(t) {
+        t=t.replace(/[.\u2026]{2,}/g,'\u2026').replace(/^[\s\u201c\u2018(\u2014\u2013-]*\u2026+\s*/,'');
+        var marks=[],i;for(i=0;i<t.length;i++)if(t.charAt(i)==='\u2026')marks.push(i);
+        if(marks.length<=1)return t;
+        var keep={},trimmed=t.replace(/[ !?\u201d\u2019)]+$/,'');
+        if(trimmed.charAt(trimmed.length-1)==='\u2026')keep[trimmed.length-1]=true;
+        else{var tr=t.replace(/\s+$/,'');if(tr.charAt(tr.length-1)==='\u2026')keep[tr.length-1]=true;}
+        var first=/^[^A-Za-z\u00c0-\u024f\u1e00-\u1eff0-9_]*([A-Za-z\u00c0-\u024f\u1e00-\u1eff]{1,3})\u2026/.exec(t);
+        if(first)keep[first[0].length-1]=true;
+        var out='';for(i=0;i<t.length;i++)out+=(t.charAt(i)==='\u2026'&&!keep[i])?',':t.charAt(i);
+        return out.replace(/,(\s*,)+/g,',');
+    }
+    function capitalise(t) {
+        var out='',fresh=true,i,ch,nx;
+        for(i=0;i<t.length;i++){
+            ch=t.charAt(i);
+            if(LETTER.test(ch)){out+=fresh?ch.toUpperCase():ch;fresh=false;}
+            else{
+                out+=ch;
+                if(ch==='.'||ch==='!'||ch==='?'){nx=i+1<t.length?t.charAt(i+1):' ';if(/\s/.test(nx)||nx==='\u201d'||nx==='\u2019'||nx===')')fresh=true;}
+                else if(/[0-9]/.test(ch))fresh=false;
+            }
+        }
+        return out;
+    }
+    function normalizeText(text, caseMode) {
+        var t=normalizeQuotes(text).replace(/[ \t]+/g,' ').replace(/^\s+|\s+$/g,'');
+        t=t.replace(/(\S)\s[\u2014\u2013]\s(?=\S)/g,'$1, ');
+        t=tidyEllipses(t).replace(/\s+([,.!?;:\u2026])/g,'$1').replace(/,(\s*,)+/g,',').replace(/^\s+|\s+$/g,'');
+        if(caseMode==='upper')return t.toUpperCase();
+        if(caseMode==='keep')return t;
+        return capitalise(t);
+    }
     function addText(doc, group, region, translation, options) {
+        // Case affects only the rendered text layer, never the saved translation.
+        translation = normalizeText(translation, options.uppercase === true ? 'upper' : (options.caseMode || 'sentence'));
         var shape = region.shape && !region.safe_limit ? region.shape : null;
         var box = shape ? shape.box : region.safe, layer = doc.artLayers.add();
         var center = shape ? shape.center : [box[0]+box[2]/2,box[1]+box[3]/2];
@@ -168,81 +348,56 @@ var MTA = (function () {
             t.position = [UnitValue(doc.width.as('px')/2, 'px'), UnitValue(doc.height.as('px')/2, 'px')];
             t.useAutoLeading = false;
             t.antiAliasMethod = AntiAlias.SHARP;
+            var lead = configureLeading(t, options);
             var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
             var maxW = box[2] - 4, maxH = box[3] - 4;
             function measure(content) {
                 t.contents = content || ' '; var b = bounds(layer);
                 return [b[2] - b[0], b[3] - b[1]];
             }
-            function shapeAttempt(size) {
-                t.size=UnitValue(size*72/doc.resolution,'pt');
-                t.leading=UnitValue(size*options.leading*72/doc.resolution,'pt');
-                var lead=size*options.leading, ref=measure('ẤỮộgj'), maxLines=Math.min(24,Math.floor(box[3]/lead)+1);
-                var widthCache={};
-                function textWidth(content){var key='$'+content;if(widthCache[key]===undefined)widthCache[key]=measure(content)[0];return widthCache[key];}
-                var paragraphs=translation.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
-                for(var count=1;count<=maxLines;count++){
-                    var top=center[1]-(ref[1]+(count-1)*lead)/2, lines=[], widths=[], bad=false;
-                    for(var row=0;row<count;row++) widths.push(shapeWidth(shape,top+row*lead,top+row*lead+ref[1],center[0])-4);
-                    for(var pi=0;pi<paragraphs.length;pi++){
-                        var words=paragraphs[pi].replace(/^\s+|\s+$/g,'').split(/\s+/), line='';
-                        for(var wi=0;wi<words.length;wi++){
-                            var next=line?line+' '+words[wi]:words[wi];
-                            if(line && textWidth(next)>(widths[lines.length]||0)){lines.push(line);line=words[wi];}else line=next;
-                            if(lines.length>=count){bad=true;break;}
-                        }
-                        if(bad)break;lines.push(line);
-                    }
-                    if(bad)continue;
-                    if(lines.length!==count){
-                        // Greedy wrapping can oscillate: two narrow rows need
-                        // three lines, while three wider rows greedily make two.
-                        // Fit exactly the chosen row count before rejecting it.
-                        lines=wrapToWidths(paragraphs,widths,textWidth);
-                        if(!lines)continue;bad=false;
-                    }
-                    var content=lines.join('\r');measure(content);var all=bounds(layer);
-                    var dx=center[0]-(all[0]+all[2])/2,dy=center[1]-(all[1]+all[3])/2;
-                    for(var li=0;li<lines.length;li++){
-                        measure(lines[li]);var b=bounds(layer), left=b[0]+dx,right=b[2]+dx;
-                        if(!shapeRectFits(shape,left,b[1]+li*lead+dy,right,b[3]+li*lead+dy)){bad=true;break;}
-                    }
-                    if(!bad)return {fits:true,content:content,size:size};
+            var refSize=100;
+            t.size=UnitValue(refSize*72/doc.resolution,'pt');
+            var wordCache={}, spaceW=(measure('a a')[0]-measure('aa')[0])/refSize, refRatio=measure('ẤỮộgj')[1]/refSize;
+            // Font metrics relative to the baseline of 'x' (bottom of its ink box).
+            function inkTop(content){t.contents=content;return bounds(layer)[1];}
+            t.contents='x';var baseRef=bounds(layer)[3];
+            var accRatio=(baseRef-inkTop('Ấ'))/refSize, capRatio=(baseRef-inkTop('H'))/refSize;
+            if(!(accRatio>0&&accRatio<2))accRatio=undefined;
+            if(!(capRatio>0&&capRatio<2))capRatio=undefined;
+            function wordW(w){if(!w)return 0;if(wordCache[w]===undefined)wordCache[w]=measure(w)[0]/refSize;return wordCache[w];}
+            function unitWidth(str){var ws=str.split(' '),sum=0;for(var k=0;k<ws.length;k++)sum+=wordW(ws[k]);return sum+spaceW*(ws.length-1);}
+            var layoutShape=shape||rectShape(box), paragraphs=translation.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+            var cap=options.maxCap!==undefined?options.maxCap:options.max, best=null;
+            // Planning is pure arithmetic on cached widths; Photoshop only
+            // verifies the result, and the size shrinks if real metrics disagree.
+            for(var tries=0;tries<14;tries++){
+                var plan=planLayout(layoutShape,paragraphs,unitWidth,refRatio,{min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12});
+                if(!plan)break;
+                var ok=true,axis=plan.axis;
+                t.size=UnitValue(plan.size*72/doc.resolution,'pt');
+                applyLeading(t, lead, plan.lead, doc.resolution);
+                for(var li=0;li<plan.lines.length&&ok;li++){
+                    var lw=measure(plan.lines[li])[0],lt=plan.top+li*plan.lead;
+                    if(!shapeRectFits(layoutShape,axis-lw/2,lt,axis+lw/2,lt+plan.rh))ok=false;
                 }
-                return {fits:false,content:'',size:size};
+                if(ok){best=plan;break;}
+                cap=plan.size*.97;if(cap<options.min)break;
             }
-            function attempt(size) {
-                if(shape)return shapeAttempt(size);
-                t.size = UnitValue(size * 72 / doc.resolution, 'pt');
-                t.leading = UnitValue(size * options.leading * 72 / doc.resolution, 'pt');
-                var paragraphs = translation.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-                var lines = [], i, j;
-                for (i = 0; i < paragraphs.length; i++) {
-                    var words = paragraphs[i].replace(/^\s+|\s+$/g, '').split(/\s+/), line = '';
-                    for (j = 0; j < words.length; j++) {
-                        if (!words[j]) continue;
-                        var next = line ? line + ' ' + words[j] : words[j];
-                        if (line && measure(next)[0] > maxW) { lines.push(line); line = words[j]; }
-                        else line = next;
-                    }
-                    lines.push(line);
-                }
-                var content = lines.join('\r'), sizePx = measure(content);
-                return {fits: sizePx[0] <= maxW && sizePx[1] <= maxH, content: content, size: size};
-            }
-            var best = attempt(options.min);
-            if (!best.fits) throw Error(region.id + ': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.');
-            var low = options.min, high = options.max;
-            while (high - low >= .5) {
-                var mid = (low + high) / 2, result = attempt(mid);
-                if (result.fits) { best = result; low = mid; } else high = mid;
-            }
+            if (!best) throw Error(region.id + ': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.');
+            best.content=best.lines.join('\r');
+            lastLayoutInfo={id:region.id,size:best.size,fill:best.fill,lines:best.lines.length};
+            if(options.dryRun){layer.remove();return null;}
+            center=[best.axis,best.cy];
             t.size = UnitValue(best.size * 72 / doc.resolution, 'pt');
-            t.leading = UnitValue(best.size * options.leading * 72 / doc.resolution, 'pt');
+            applyLeading(t, lead, best.lead, doc.resolution);
+            // Horizontal: centre the ink on the chosen axis. Vertical: put the first
+            // baseline where the optical-centring plan wants it (not the ink box centre,
+            // which accents and descenders would drag off).
+            t.contents='x';var baseNow=bounds(layer)[3];
             t.contents = best.content;
             var actual = bounds(layer);
             layer.translate(UnitValue(center[0] - (actual[0] + actual[2])/2, 'px'),
-                            UnitValue(center[1] - (actual[1] + actual[3])/2, 'px'));
+                            UnitValue(best.baseline - baseNow, 'px'));
             actual = bounds(layer);
             if (actual[0] < box[0] - .5 || actual[1] < box[1] - .5 ||
                 actual[2] > box[0]+box[2]+.5 || actual[3] > box[1]+box[3]+.5) throw Error(region.id + ': chữ vượt vùng an toàn');
@@ -254,6 +409,7 @@ var MTA = (function () {
     // Recovery placement deliberately does not promise to fit the region.
     // Preserve the whole string in a visible, movable Photoshop text layer.
     function addFallbackText(doc, group, text, options, center, name, maxWidth) {
+        text = normalizeText(text, options.uppercase === true ? 'upper' : (options.caseMode || 'sentence'));
         var layer = doc.artLayers.add(), previousQuotes = app.preferences.smartQuotes;
         try {
             if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = false;
@@ -302,6 +458,53 @@ var MTA = (function () {
             return layer;
         } finally { if (image) image.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
     }
+    // One Photoshop layer per cleaned bubble (instead of a single page-wide layer), inside
+    // one group, so a reviewer can hide, move, repaint or delete the fix for one bubble.
+    // `layers` come from manga_ai/clean_layers.py: {id,file,x,y}. Returns how many layers
+    // were created; on any failure the partial group is removed and 0 is returned so the
+    // caller can fall back to the single overlay.
+    function addRegionOverlays(doc, layers, options) {
+        options = options || {};
+        var ai = {}, i, made = 0, group = null;
+        for (i = 0; i < (options.aiIds || []).length; i++) ai[options.aiIds[i]] = true;
+        try {
+            app.activeDocument = doc;
+            group = doc.layerSets.add();
+            group.name = options.title || 'CLEAN — từng bubble';
+            for (i = 0; i < layers.length; i++) {
+                var info = layers[i], image = null;
+                try {
+                    image = app.open(new File(info.file));
+                    var layer = image.activeLayer.duplicate(doc, ElementPlacement.PLACEATBEGINNING);
+                    image.close(SaveOptions.DONOTSAVECHANGES); image = null;
+                    app.activeDocument = doc;
+                    var got = bounds(layer);
+                    layer.translate(UnitValue(info.x - got[0], 'px'), UnitValue(info.y - got[1], 'px'));
+                    layer.name = info.id === 'REST' ? 'CLEAN (phần còn lại)' : (ai[info.id] ? 'CLEAN AI — CẦN DUYỆT ' : 'CLEAN ') + info.id;
+                    layer.move(group, ElementPlacement.INSIDE);
+                    made++;
+                } finally { if (image) image.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
+            }
+            return made;
+        } catch (e) {
+            try { if (group) group.remove(); } catch (_) {}
+            return 0;
+        }
+    }
+    // Find the text layer ("[THOẠI] B007 | …") and the clean layer ("CLEAN B007") of one bubble,
+    // searching nested groups. Names are the contract between typesetting and review.
+    function findRegionLayers(container, regionId, found) {
+        found = found || {text: null, clean: null};
+        for (var li = 0; li < container.layers.length; li++) {
+            var l = container.layers[li];
+            if (l.typename === 'LayerSet') { findRegionLayers(l, regionId, found); continue; }
+            if (!found.text && l.name.indexOf(' ' + regionId + ' |') >= 0) found.text = l;
+            else if (!found.clean && /^CLEAN/.test(l.name) && l.name.length >= regionId.length &&
+                     l.name.substr(l.name.length - regionId.length) === regionId &&
+                     (l.name.length === regionId.length || l.name.charAt(l.name.length - regionId.length - 1) === ' ')) found.clean = l;
+        }
+        return found;
+    }
     function translationKey(parsed,name,index) {
         var match=/(\d+)(?=\.[^.]+$)/.exec(decodeURI(name));
         if(parsed.marked && match && (parsed.filename_pages || parsed.pages[String(Number(match[1]))])) return String(Number(match[1]));
@@ -338,9 +541,21 @@ var MTA = (function () {
     function shapeRectFits(shape,left,top,right,bottom) {
         return right-left<=shapeWidth(shape,top,bottom,(left+right)/2)-1;
     }
-    function wrapToWidths(paragraphs,widths,measure) {
-        var words=[],i;
-        for(i=0;i<paragraphs.length;i++)words.push(paragraphs[i].replace(/^\s+|\s+$/g,'').split(/\s+/));
+    // Line breaking with a readability cost. wrapScored returns {cost,lines};
+    // wrapToWidths keeps the old lines-only API. Soft penalties only: a break
+    // inside a quotation, after an opening quote or a bare ellipsis, after a
+    // Vietnamese function word, and a very short word left alone on a line.
+    function wrapScored(paragraphs,widths,measure) {
+        var words=[],opened=[],i,j;
+        for(i=0;i<paragraphs.length;i++){
+            words.push(paragraphs[i].replace(/^\s+|\s+$/g,'').split(/\s+/));
+            var depth=0,row=[0];
+            for(j=0;j<words[i].length;j++){
+                depth+=(words[i][j].match(/[\u201c\u2018(]/g)||[]).length-(words[i][j].match(/[\u201d\u2019)]/g)||[]).length;
+                row.push(Math.max(0,depth));
+            }
+            opened.push(row);
+        }
         var memo={};
         function solve(row,paragraph,start){
             if(row===widths.length)return paragraph===words.length?{cost:0,lines:[]}:null;
@@ -355,11 +570,47 @@ var MTA = (function () {
                 var tail=solve(row+1,next?paragraph+1:paragraph,next?0:end+1);
                 if(!tail)continue;
                 var cost=tail.cost+Math.pow((widths[row]-width)/widths[row],2);
+                var rawWord=words[paragraph][end],last=rawWord.toLowerCase().replace(/[.,!?;:\u2026]+$/g,'');
+                if(!next){
+                    if(/^(và|của|với|cho|từ|để|về|là|một|các|những|tự)$/.test(last))cost+=0.35;
+                    if(/[\u201c\u2018(]$/.test(rawWord))cost+=2;
+                    if(/^(\u2026|\.\.\.)$/.test(rawWord))cost+=1;
+                    if(opened[paragraph][end+1]>0)cost+=0.4;
+                }
+                if(end===start && words[paragraph].length>1)cost+=last.replace(/[\u201c\u201d\u2018\u2019"()]/g,'').length<=3?0.5:0.08;
                 if(!best || cost<best.cost)best={cost:cost,lines:[content].concat(tail.lines)};
             }
             memo[key]=best;return best;
         }
-        var result=solve(0,0,0);return result?result.lines:null;
+        return solve(0,0,0);
+    }
+    function wrapToWidths(paragraphs,widths,measure) {
+        var result=wrapScored(paragraphs,widths,measure);return result?result.lines:null;
+    }
+    // Review hints for placed text; thresholds are heuristics, not measured.
+    // infos: [{id,size,fill}]. A short line capped by options.max is never flagged.
+    function layoutFlags(infos, o) {
+        var sizes=[],i,out=[];
+        for(i=0;i<infos.length;i++)sizes.push(infos[i].size);
+        sizes.sort(function(a,b){return a-b;});
+        var median=sizes.length?sizes[Math.floor(sizes.length/2)]:0;
+        for(i=0;i<infos.length;i++){
+            var f=infos[i],flags=[];
+            if(f.size<=o.min*1.05)flags.push('at_min_size');
+            else if(infos.length>=3 && f.size<median*.75)flags.push('small_vs_page');
+            if(f.fill<.15 && f.size<o.max*.999)flags.push('low_fill');
+            if(flags.length)out.push({id:f.id,flags:flags,size:Math.round(f.size*10)/10,fill:Math.round(f.fill*100)/100});
+        }
+        return out;
+    }
+    // Pages already finished in a previous batch log, keyed by source name.
+    function finishedPages(log) {
+        var done={};
+        for(var i=0;i<log.length;i++){
+            var e=log[i];
+            if(e && e.ok && (e.status==='processed'||e.status==='partial'||e.status==='skipped_no_translation'))done[e.source]=e;
+        }
+        return done;
     }
     function unmappedTranslations(lines, mapping) {
         function normal(s) { return String(s).replace(/\s/g,'').toLowerCase(); }
@@ -425,13 +676,46 @@ var MTA = (function () {
         }
         return data;
     }
+    // Photoshop PDF options. With exports.pdfLayers the PDF keeps every layer (it embeds the whole
+    // PSD, so it can be reopened and edited in Photoshop); otherwise it is a flattened PDF.
+    function pdfSaveOptions(exports) {
+        exports = exports || {};
+        var pdfOpts = new PDFSaveOptions(), keepLayers = exports.pdfLayers === true;
+        pdfOpts.preserveEditing = keepLayers;
+        pdfOpts.layers = keepLayers;
+        pdfOpts.embedColorProfile = true;
+        // Scripted saves default to uncompressed image data (3-4x larger than File > Save As).
+        // Match the manual dialog: JPEG, no thumbnail.
+        pdfOpts.encoding = PDFEncoding.JPEGHIGH;
+        pdfOpts.jpegQuality = 10;
+        pdfOpts.embedThumbnail = false;
+        pdfOpts.downgradeColorProfile = false;
+        return pdfOpts;
+    }
+    // Line spacing: Photoshop's own Auto leading (a percentage of the size, so the spacing follows
+    // when someone resizes the text later). The percentage is set and read back; if this Photoshop
+    // does not honour it, fall back to an explicit leading so the planned layout stays true.
+    function configureLeading(t, options) {
+        if (options.autoLeading === true) {
+            try {
+                t.useAutoLeading = true;
+                t.autoLeadingAmount = options.leading * 100;
+                if (Math.abs(Number(t.autoLeadingAmount) - options.leading * 100) <= .5) return {auto: true, ratio: options.leading};
+            } catch (_) {}
+            t.useAutoLeading = false;
+        }
+        return {auto: false, ratio: options.leading};
+    }
+    function applyLeading(t, lead, pixels, resolution) {
+        if (!lead.auto) t.leading = UnitValue(pixels * 72 / resolution, 'pt');
+    }
     function saveCopy(doc, folder, base, exports, kind, savedFiles) {
         mkdir(folder);
         exports = exports || {};
         var savePsd = exports.psd !== false, savePdf = exports.pdf === true;
         if (!savePsd && !savePdf) throw Error('Chọn ít nhất một định dạng: PSD hoặc Photoshop PDF.');
         base = base.replace(/\.[^.]+$/, '').replace(/[\/:\x00-\x1f]/g, '_');
-        var suffix = kind === 'clean' ? '_clean' : '_typeset';
+        var suffix = kind === 'clean' ? '_clean' : (kind === 'draft' ? '_DRAFT' : '_typeset');
         var name = base + suffix, n = 1;
         while (new File(folder.fsName + '/' + name + '.psd').exists ||
                new File(folder.fsName + '/' + name + '.pdf').exists ||
@@ -445,19 +729,7 @@ var MTA = (function () {
             if (savedFiles) savedFiles.psd = psd.fsName;
         }
         if (savePdf) {
-            var pdfOpts = new PDFSaveOptions();
-            // Layered PDF embeds the whole PSD (lossless pixels), so JPEG settings
-            // below only shrink the composite. Default to a flattened PDF.
-            var keepLayers = exports.pdfLayers === true;
-            pdfOpts.preserveEditing = keepLayers;
-            pdfOpts.layers = keepLayers;
-            pdfOpts.embedColorProfile = true;
-            // Scripted saves default to uncompressed image data (3-4x larger than
-            // File > Save As). Match the manual dialog: JPEG, no thumbnail.
-            pdfOpts.encoding = PDFEncoding.JPEGHIGH;
-            pdfOpts.jpegQuality = 10;
-            pdfOpts.embedThumbnail = false;
-            pdfOpts.downgradeColorProfile = false;
+            var pdfOpts = pdfSaveOptions(exports);
             doc.saveAs(pdf, pdfOpts, true, Extension.LOWERCASE);
             if (savedFiles) savedFiles.pdf = pdf.fsName;
         }
@@ -482,5 +754,5 @@ var MTA = (function () {
         return savePsd ? psd : pdf;
     }
     return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, confirmChapter: confirmChapter, shell: shell, request: request,
-            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addFallbackText: addFallbackText, addOverlay: addOverlay, saveCopy: saveCopy};
+            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

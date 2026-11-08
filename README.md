@@ -6,7 +6,7 @@
 ảnh gốc → nhận diện & OCR → duyệt vùng → clean → typeset → PSD / PDF / JPEG
 ```
 
-Bạn cung cấp bản dịch; ứng dụng không tự dịch bằng LLM. Vùng khó có thể giữ lại để clean tay. Mọi xử lý chạy trên máy bạn, không gửi ảnh ra ngoài.
+Bạn có thể cung cấp bản dịch hoặc thử tính năng dịch AI tùy chọn; OCR và context sẽ được gửi tới API khi dùng tính năng này. Ảnh chỉ được gửi khi bạn bật vision; crop có thể chứa nội dung lân cận và gửi cả trang có thể lộ diễn biến. Vùng khó có thể giữ lại để clean tay. Xem [hướng dẫn Translation V1](docs/architecture/translation_v1.md).
 
 | Thành phần | Bản hiện tại |
 | --- | --- |
@@ -114,6 +114,12 @@ python manga_typesetter.py download-models --profile 1107 --check-only   # kiể
 python manga_typesetter.py download-models --profile 1107                # tải về models/
 ```
 
+Tab **Tự động** cần thêm model **LaMa** (khoảng 206 MB, nằm trong profile `preview`) để vẽ lại nền ở các bong bóng trong suốt hoặc có tranh phía sau. Thiếu model này, máy chỉ dùng engine thường và nhiều bong bóng sẽ không được xoá chữ gốc:
+
+```sh
+python manga_typesetter.py download-models --profile preview --download
+```
+
 Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và model Magi (sắp xếp panel, khoảng **2 GB**, giấy phép phi thương mại), kiểm tra kích thước và SHA-256 theo revision được pin. Magi cần PyTorch và `transformers` đã nằm trong `requirements-ai.txt`; trên NVIDIA hãy cài `torch` bản CUDA trước (bước 5 ở mục 3) rồi mới cài `requirements-ai.txt`. Inference không bao giờ tự tải weights. Các profile `preview`, `assist`, `aot` là tùy chọn. Qwen (nhận diện font) vẫn cài riêng bằng `scripts/setup_heavy_assist.py`. Xem [model manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [notices upstream](models/NOTICE.md).
 
 `requirements*.lock.txt` ghi môi trường đã đo trên Mac; môi trường khác dùng file requirements thường để pip chọn wheel tương thích.
@@ -127,6 +133,16 @@ Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và model
 Báo cáo `ready: true` nghĩa là đủ package, Tesseract và ngôn ngữ OCR. Bạn cũng có thể chạy `Photoshop_CheckPython.jsx` trong Photoshop để kiểm tra đường Photoshop → Python; kết quả lưu ở `work/environment.json`.
 
 ## 6. Luồng sử dụng trong Photoshop
+
+### Thử nhanh bằng tab "Tự động" (người mới)
+
+1. Mở Photoshop, chạy `Photoshop_Typeset.jsx`. Tab đầu tiên là **Tự động (khuyên dùng)**.
+2. Cài font trong `assets/fonts/` vào máy (Pangolin là font mặc định của tab này) rồi mở lại Photoshop. Điền **Host**, **Tên model** và **API key** (key chỉ cần dán một lần, được lưu trên máy này và xoá khỏi ô sau khi lưu).
+3. Bấm **Chọn thư mục truyện** (JPG, PNG hoặc PSD, mỗi trang một file), kiểm tra tên bộ truyện.
+4. Bấm **Chỉ thử 3 trang** trước. Máy làm thử 3 trang rải trong tập, rồi báo có nên chạy cả tập không. Nếu ổn, bấm **Bắt đầu** để chạy cả tập; có thể làm việc khác, Photoshop sẽ báo khi xong.
+5. Kết quả nằm trong `_MangaTypesetter/` cạnh thư mục truyện: mỗi trang một Adobe Photoshop PDF giữ layer (nhóm `CLEAN — từng bubble` và `TYPESET — Tiếng Việt`), cùng báo cáo `BAO_CAO.html` liệt kê chỗ cần xem. Bấm **Rà soát nhanh** để sửa từng bong bóng ngay trong Photoshop.
+
+Khi báo lỗi, gửi kèm `BAO_CAO.html`, thư mục `_MangaTypesetter/chay_thu_*` và file `work/jobs/*/worker.log` mới nhất. Đây là bản thử: giao diện Photoshop mới được kiểm bằng mô phỏng, chưa chạy thật trên nhiều máy.
 
 1. **Mở ảnh gốc** (hoặc chọn folder cả chương), rồi File → Scripts → Browse → `Photoshop_Typeset.jsx`.
 2. **Tab Nguồn & nhận diện**: chọn tài liệu/folder, ngôn ngữ OCR đúng với chữ gốc (ví dụ `jpn_vert` cho tiếng Nhật dọc), mức quét, và **Tăng tốc** (xem [mục 7](#7-chọn-phần-cứng-và-tối-ưu-hiệu-năng)). Bấm quét.
@@ -148,6 +164,8 @@ python manga_typesetter.py --accel cpu scan /duong/dan/anh --out /duong/dan/xuat
 ```
 
 `--accel` đặt trước tên lệnh con. Có thể dùng biến môi trường `MANGA_ACCEL` thay thế.
+
+Font comic mẫu và giấy phép: [assets/fonts](assets/fonts/README.md).
 
 ## 7. Chọn phần cứng và tối ưu hiệu năng
 

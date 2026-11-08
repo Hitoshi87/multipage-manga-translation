@@ -19,12 +19,20 @@ FILES = (
     'models/NOTICE.md', 'models/README.md', 'models/manifest.json',
     'demo_project/pages/001_page1/original.png',
     'demo_project/pages/001_page1/bubbles.tsv',
+    'assets/fonts/README.md', 'assets/fonts/itim/Itim-Regular.ttf', 'assets/fonts/itim/OFL.txt',
+    'assets/fonts/patrickhand/PatrickHand-Regular.ttf', 'assets/fonts/patrickhand/OFL.txt',
+    'assets/fonts/bangers/Bangers-Regular.ttf', 'assets/fonts/bangers/OFL.txt',
+    'assets/fonts/mali/Mali-Regular.ttf', 'assets/fonts/mali/Mali-Bold.ttf', 'assets/fonts/mali/OFL.txt',
+    'assets/fonts/pangolin/Pangolin-Regular.ttf', 'assets/fonts/pangolin/OFL.txt',
+    'assets/fonts/sriracha/Sriracha-Regular.ttf', 'assets/fonts/sriracha/OFL.txt',
+    # Shared by the Python and JS lettering tests.
+    'tests/fixtures/textnorm_cases.json',
 )
 SCRIPTS = (
     'core.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
     'clean_generated.py', 'setup_ai.py', 'setup_aot.py', 'setup_assist_models.py',
     'setup_heavy_assist.py', 'setup_preview_models.py',
-    'audit_fill_color.py', 'bubble_crop_compare.py', 'bubble_decision_trace.py',
+    'audit_fill_color.py', 'bubble_crop_compare.py', 'bubble_decision_trace.py', 'benchmark_ocr.py',
     # Thin compatibility adapter covered by the ownership regression suite.
     'cross_manga_ownership_shadow.py',
 )

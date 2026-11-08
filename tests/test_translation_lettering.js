@@ -1,0 +1,11 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const ctx={};vm.createContext(ctx);vm.runInContext(fs.readFileSync('scripts/core.jsxinc','utf8'),ctx);
+const words='Một hai ba bốn năm sáu';
+const lines=ctx.MTA.wrapToWidths([words],[8,8,8],s=>s.length);
+assert.deepStrictEqual(Array.from(lines),['Một hai','ba bốn','năm sáu']);
+assert.strictEqual(ctx.MTA.wrapToWidths(['Văn bản rất dài'],[2],s=>s.length),null);
+const source=fs.readFileSync('Photoshop_Typeset.jsx','utf8');
+assert(source.includes("fontIds[sj]===ids[si]"));
+assert(source.includes("'Itim-Regular','PatrickHand-Regular','Bangers-Regular'"));
+assert(source.includes('uppercase: uppercaseText.value'));
+console.log('Lettering: balanced wrapping, overflow refusal and native font selection wiring PASS');

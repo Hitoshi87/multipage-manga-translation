@@ -40,8 +40,10 @@
         var group = doc.layerSets.add(); group.name = 'TYPESET — Tiếng Việt';
         for (var i = 0; i < mapping.length; i++) {
             var layer = MTA.addText(doc, group, scan.regions[i], mapping[i].translation,
-                                    {font: 'ArialMT', min: 12, max: 38, leading: 1.15});
+                                    {font: 'ArialMT', min: 12, max: 38, leading: 1.15, uppercase:i===0});
             if (layer.kind !== LayerKind.TEXT) throw Error('Rasterized text');
+            if (i===0 && (layer.textItem.contents.indexOf('XIN')<0 || mapping[i].translation.indexOf('Xin')<0))
+                throw Error('Uppercase rendering changed source mapping or failed');
         }
         var saved = MTA.saveCopy(doc, dir, 'Trang tiếng Việt', {png: true, jpg: true});
         var second = MTA.saveCopy(doc, dir, 'Trang tiếng Việt', {});
@@ -60,6 +62,7 @@
         catch (_) { longTextRejected = true; }
         if (!longTextRejected || textGroup.artLayers.length !== beforeLayers) throw Error('Overflow must fail without a stray layer');
         report.checks.push('300 dpi fit and overflow refusal');
+        report.checks.push('Optional uppercase rendered without modifying translation');
         report.checks.push('Editable Vietnamese text, rendered fit, PSD save/reopen, PNG/JPG, no overwrite');
         if (source.layers.length !== before) throw Error('Changed original document');
         report.checks.push('Original layer stack unchanged');
