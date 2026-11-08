@@ -1,0 +1,9 @@
+{
+    "name": "Mayonaka Heart Tune — mẫu không spoiler",
+    "scope": "Mẫu thử dựa trên các trang 04–07 đã xem; không phải hồ sơ canon hay bản prompt đã được benchmark tối ưu.",
+    "series_name": "Mayonaka Heart Tune",
+    "general_prompt": "Manga Nhật có những cảnh hội thoại học đường và hài tình huống. Bám theo từng cảnh và diễn biến có trong nguồn hiện tại; không giả định mọi cảnh đều diễn ra ở trường, không suy đoán quan hệ hay tình cảm. Lời thoại có thể nối qua nhiều bubble hoặc trang; giữ logic và câu đùa khi được nguồn hỗ trợ. Không sử dụng thông tin từ các chương chưa tới.",
+    "style_prompt": "Tiếng Việt tự nhiên, gọn và rõ như lời thoại truyện tranh. Giữ nhịp đối đáp, sự ngập ngừng và các câu nói nhịu có ý nghĩa. Nhân vật tự tin có thể nói trang trọng, hơi khoa trương nếu nguyên tác thể hiện điều đó; không tự thêm sự kịch tính, lời trêu chọc hoặc cảm xúc. Không dùng dấu gạch chéo để liệt kê cách xưng hô trong câu thành phẩm. Khi chưa đủ căn cứ, ưu tiên diễn đạt tự nhiên không cần đại từ; nếu không khả thi thì gắn cờ cần duyệt.",
+    "localization_policy": "Giữ tên riêng và thuật ngữ đúng theo glossary đã xác nhận. Nếu chưa xác nhận cách đọc, không tự khóa hay suy đoán nó thành canon; dùng cách biểu đạt thận trọng và gắn cờ khi cần. Việt hóa kính ngữ theo quan hệ và hoàn cảnh có chứng cứ; giáo viên và học sinh dùng xưng hô phù hợp khi vai trò được xác nhận, không tự áp cho cảnh khác. Giữ mức độ tiếng lóng và cảm xúc theo nguyên tác. Giữ nguyên placeholder và markup. Với bạn học thân thiết cùng lứa, khi cảnh hỗ trợ, ưu tiên tớ/cậu hoặc mình/cậu thay vì tôi/bạn cứng nhắc hoặc anh/em không có căn cứ; không áp cho người lạ hoặc cảnh trang trọng.",
+    "glossary": "Chưa có tên riêng hay thuật ngữ nào được người dùng xác nhận. Không coi các cách đọc do OCR, model hoặc bản nháp đề xuất là tên canon."
+}

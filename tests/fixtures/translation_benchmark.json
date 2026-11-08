@@ -1,0 +1,14 @@
+{
+  "description": "Manual JP→VI evaluation inputs. No reference translations or quality claims.",
+  "cases": [
+    {"id":"ambiguous_pronoun","jp":"もう行ったの？","tags":["ambiguous_pronouns","unknown_speaker"]},
+    {"id":"honorific","jp":"先輩、ちょっといいですか？","tags":["honorifics"]},
+    {"id":"colloquial","jp":"別に心配してないし。","tags":["colloquial","emotional_nuance"]},
+    {"id":"sarcasm","jp":"へえ、すごいですね。","tags":["sarcasm","context_dependent"]},
+    {"id":"ocr_error","jp":null,"raw_ocr":"[OCR chưa đọc được]","tags":["blocked_ocr"]},
+    {"id":"context_only","jp":"うん、どうした？","context_only":[{"id":"previous","jp":"先輩、ちょっといいですか？"}],"tags":["context_only"]},
+    {"id":"cross_page_1","jp":"もし明日、","page":1,"tags":["cross_page"]},
+    {"id":"cross_page_2","jp":"雨が降ったらどうする？","page":2,"tags":["cross_page"]}
+  ],
+  "record_fields": ["model", "prompt_revision", "input_tokens", "output_tokens", "latency_ms", "output_valid", "manual_quality_score"]
+}
