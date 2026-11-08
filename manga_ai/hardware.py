@@ -87,6 +87,10 @@ def _preload_cuda_libs():
         prefix=sys.prefix
         libs=glob.glob(os.path.join(prefix,'lib','python*','site-packages','nvidia','*','lib','*.so*'))
         for lib in sorted(libs):
+            # NVBLAS interposes CPU BLAS globally; when it has no CPU BLAS
+            # configuration it can crash PyTorch/MAGI after ONNX initializes.
+            # CUDA execution does not require preloading this optional shim.
+            if os.path.basename(lib).lower().startswith('libnvblas'):continue
             try:ctypes.CDLL(lib,mode=ctypes.RTLD_GLOBAL)
             except Exception:pass
     except Exception:pass

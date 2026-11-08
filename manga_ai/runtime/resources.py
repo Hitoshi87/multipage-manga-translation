@@ -1,7 +1,5 @@
 """Bounded-memory file and image readers."""
 import hashlib
-import numpy as np
-from PIL import Image
 
 
 def sha256_file(path):
@@ -12,8 +10,12 @@ def sha256_file(path):
 
 
 def read_rgb(path):
+    import numpy as np
+    from PIL import Image
     with Image.open(path) as image:return np.array(image.convert('RGB'))
 
 
 def read_gray(path):
+    import numpy as np
+    from PIL import Image
     with Image.open(path) as image:return np.array(image.convert('L'))

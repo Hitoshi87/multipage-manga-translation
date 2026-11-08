@@ -12,7 +12,10 @@ def supported_mask(rgb, region, text_mask, detections, heads):
     if region.get('detector')!='ai_balloon' or region.get('detector_confidence',0)<.9:
         return None
     x,y,w,h=region['box']
-    if w*h>rgb.shape[0]*rgb.shape[1]*.08:return None
+    # Large balloons can be legitimate. This path still requires independent
+    # text-box/pixel agreement, an eroded outline, flat background and head
+    # exclusion; keep a hard cap for page-sized false detections.
+    if w*h>rgb.shape[0]*rgb.shape[1]*.20:return None
     polygon=outline_interior(region)
     if polygon is None:return None
     support=np.zeros((h,w),np.uint8)

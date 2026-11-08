@@ -55,6 +55,255 @@ def split_text_groups(rgb, candidates, detections):
     return result
 
 
+def split_vertical_text_groups(rgb, candidates, detections):
+    """Split offset stacked lobes only across an ink-free interior band.
+
+    This deliberately handles two strongly supported, vertically separated
+    text blocks with shifted horizontal centers; ordinary aligned paragraphs
+    and overlapping glyphs remain a single reviewable region.
+    """
+    gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY);result=[]
+    for parent in candidates:
+        x,y,w,h=parent['box'];groups=[]
+        for d in detections:
+            if d['kind']!='in_bubble' or d['confidence']<.9:continue
+            tx,ty,tw,th=d['box']
+            overlap=max(0,min(x+w,tx+tw)-max(x,tx))*max(0,min(y+h,ty+th)-max(y,ty))
+            if overlap/(tw*th)>=.9:groups.append(d['box'])
+        if len(groups)!=2:result.append(parent);continue
+        groups.sort(key=lambda b:b[1]);a,b=groups
+        if (a[1]+a[3]/2>=b[1]+b[3]/2 or abs((a[0]+a[2]/2)-(b[0]+b[2]/2))<w*.20
+                or b[1]-(a[1]+a[3]) < -max(5,round(h*.03))):
+            result.append(parent);continue
+        low=max(1,a[1]+a[3]-y-15);high=min(h-1,b[1]-y+15)
+        if high<=low:result.append(parent);continue
+        inside=parent['interior']>0;ink=(gray[y:y+h,x:x+w]<210)&inside
+        midpoint=(a[1]+a[3]+b[1])/2-y
+        cuts=[v for v in range(low,high) if not np.any(ink[max(0,v-1):min(h,v+2)])]
+        cuts=[v for v in cuts if (v+y-a[1])/a[3]>.85 and (b[1]+b[3]-(v+y))/b[3]>.85]
+        if not cuts:result.append(parent);continue
+        cut=min(cuts,key=lambda c:abs(c-midpoint));children=[]
+        for top,bottom in ((0,cut),(cut,h)):
+            mask=parent['interior'][top:bottom,:].copy()
+            if bottom-top<30 or cv2.countNonZero(mask)<500:break
+            child=dict(parent);child.update(box=[x,y+top,w,bottom-top],interior=mask,
+                geometry_evidence='vertical_text_groups_whitespace',parent_box=parent['box'][:])
+            children.append(child)
+        result.extend(children if len(children)==2 else [parent])
+    return result
+
+
+def split_text_groups_watershed(rgb, candidates, detections, max_neck=.6):
+    """Split chained balloons holding 2-8 text groups, in any arrangement.
+
+    One marker per confident text group, watershed on the interior distance
+    transform. A boundary is accepted only when it is a narrow neck relative to
+    both neighbouring basins and carries no ink; otherwise the two basins are
+    merged again. Any doubt keeps the parent as one reviewable region.
+    """
+    gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY);result=[]
+    for parent in candidates:
+        if parent.get('parent_box'):result.append(parent);continue
+        x,y,w,h=parent['box'];boxes=[]
+        for d in detections:
+            if d['kind']!='in_bubble' or d['confidence']<.9:continue
+            tx,ty,tw,th=d['box']
+            overlap=max(0,min(x+w,tx+tw)-max(x,tx))*max(0,min(y+h,ty+th)-max(y,ty))
+            if overlap/max(1,tw*th)>=.9:boxes.append(d['box'])
+        if not 2<=len(boxes)<=8:result.append(parent);continue
+        children=_watershed_children(gray,parent,boxes,max_neck)
+        result.extend(children if children else [parent])
+    return result
+
+
+def _watershed_children(gray, parent, boxes, max_neck):
+    x,y,w,h=parent['box'];inside=(parent['interior']>0).astype(np.uint8)
+    dist=cv2.distanceTransform(inside,cv2.DIST_L2,5);n=len(boxes)
+    markers=np.zeros((h,w),np.int32)
+    for i,(tx,ty,tw,th) in enumerate(boxes,1):
+        # Marker is the core of the text box that lies inside the balloon.
+        x0=max(0,tx-x+tw//4);x1=min(w,tx-x+tw-tw//4);y0=max(0,ty-y+th//4);y1=min(h,ty-y+th-th//4)
+        core=inside[y0:y1,x0:x1]>0
+        if x1<=x0 or y1<=y0 or not core.any() or np.any(markers[y0:y1,x0:x1][core]):return None
+        markers[y0:y1,x0:x1][core]=i
+    markers[inside==0]=n+1
+    surface=(255-np.clip(dist/max(dist.max(),1)*255,0,255)).astype(np.uint8)
+    labels=cv2.watershed(cv2.merge([surface]*3),markers)
+    ink=(gray[y:y+h,x:x+w]<210)
+    parent_of=list(range(n+2))
+    def find(a):
+        while parent_of[a]!=a:parent_of[a]=parent_of[parent_of[a]];a=parent_of[a]
+        return a
+    line=(labels==-1)&(inside>0)
+    for a in range(1,n+1):
+        for b in range(a+1,n+1):
+            near_a=cv2.dilate((labels==a).astype(np.uint8),np.ones((3,3),np.uint8))>0
+            near_b=cv2.dilate((labels==b).astype(np.uint8),np.ones((3,3),np.uint8))>0
+            cut=line&near_a&near_b
+            if not cut.any():continue
+            # Watershed lines can be several pixels thick; use their span.
+            ys,xs=np.nonzero(cut);length=max(cv2.minAreaRect(np.column_stack([xs,ys]).astype(np.float32))[1])
+            reach=min(dist[labels==a].max(),dist[labels==b].max())*2
+            neck=length/max(reach,1);inked=ink[cut].mean()
+            if neck>=max_neck or inked>.05:parent_of[find(b)]=find(a)
+    groups={}
+    for i in range(1,n+1):groups.setdefault(find(i),[]).append(i)
+    if len(groups)<2:return None
+    # Boundary pixels go to the nearest basin so children tile the balloon.
+    masks=[np.isin(labels,members)&(inside>0)&(labels>0) for members in groups.values()]
+    owner=np.argmin(np.stack([cv2.distanceTransform((~m).astype(np.uint8),cv2.DIST_L2,3) for m in masks]),axis=0)
+    children=[]
+    for k in range(len(masks)):
+        mask=((owner==k)&(inside>0)).astype(np.uint8)*255
+        ys,xs=np.nonzero(mask)
+        if not len(xs):return None
+        left,right,top,bottom=xs.min(),xs.max()+1,ys.min(),ys.max()+1
+        if right-left<20 or bottom-top<20 or cv2.countNonZero(mask)<500:return None
+        child=dict(parent);child.update(box=[x+int(left),y+int(top),int(right-left),int(bottom-top)],
+            interior=mask[top:bottom,left:right].copy(),geometry_evidence='watershed_text_groups',
+            parent_box=parent['box'][:])
+        children.append(child)
+    children.sort(key=lambda c:(c['box'][1],c['box'][0]))
+    return children
+
+
+def confident_text_boxes(parent, detections, confidence=.9):
+    """Text-group boxes (>=confidence) that lie inside the parent's box."""
+    x, y, w, h = parent['box']
+    boxes = []
+    for d in detections:
+        if d['kind'] != 'in_bubble' or d['confidence'] < confidence:
+            continue
+        tx, ty, tw, th = d['box']
+        overlap = max(0, min(x + w, tx + tw) - max(x, tx)) * max(0, min(y + h, ty + th) - max(y, ty))
+        if overlap / max(1, tw * th) >= .9:
+            boxes.append(d['box'])
+    return boxes
+
+
+def _separator_cuts(gray, parent, boxes, axis, dark=110, cover=.7, max_thickness=9):
+    """Cut positions (relative to the parent box) across one axis, or None.
+
+    A cut is a straight dark stroke between two consecutive text groups that
+    covers most of the balloon width (axis 'y') or height (axis 'x').
+    """
+    x, y, w, h = parent['box']
+    inside = parent['interior'] > 0
+    order = sorted(boxes, key=lambda b: b[1] if axis == 'y' else b[0])
+    cuts = []
+    for a, b in zip(order, order[1:]):
+        a_end = (a[1] + a[3] - y) if axis == 'y' else (a[0] + a[2] - x)
+        b_start = (b[1] - y) if axis == 'y' else (b[0] - x)
+        if b_start - a_end < 3:
+            return None
+        lo, hi = max(0, a_end), min(h if axis == 'y' else w, b_start)
+        scores = []
+        for v in range(lo, hi):
+            if axis == 'y':
+                # Span of the mask around this row: the stroke itself may be outside the mask.
+                near = inside[max(0, v - 4):min(h, v + 5), :]
+                cols = np.flatnonzero(near.any(axis=0))
+                if not len(cols):
+                    scores.append(0)
+                    continue
+                left, right = cols[0], cols[-1] + 1
+                line = gray[y + v, x + left:x + right]
+            else:
+                near = inside[:, max(0, v - 4):min(w, v + 5)]
+                rows = np.flatnonzero(near.any(axis=1))
+                if not len(rows):
+                    scores.append(0)
+                    continue
+                top, bottom = rows[0], rows[-1] + 1
+                line = gray[y + top:y + bottom, x + v]
+            scores.append(float(np.mean(line < dark)) if len(line) else 0.0)
+        runs, start = [], None
+        for i, sc in enumerate(scores + [0]):
+            if sc >= cover and start is None:
+                start = i
+            elif sc < cover and start is not None:
+                runs.append((start, i))
+                start = None
+        runs = [r for r in runs if r[1] - r[0] <= max_thickness]
+        if not runs:
+            return None
+        best = max(runs, key=lambda r: sum(scores[r[0]:r[1]]))
+        cuts.append((lo + best[0], lo + best[1]))
+    return cuts
+
+
+def split_text_groups_separator(rgb, candidates, detections):
+    """Split adjacent boxes that share one straight ink line (no neck to cut).
+
+    Two or more confident text groups, all separated along the same axis by a
+    dark stroke spanning most of the balloon, become one region per group.
+    Anything uncertain keeps the parent as a single reviewable region.
+    """
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    result = []
+    for parent in candidates:
+        if parent.get('parent_box'):
+            result.append(parent)
+            continue
+        boxes = confident_text_boxes(parent, detections)
+        if not 2 <= len(boxes) <= 8:
+            result.append(parent)
+            continue
+        children = None
+        for axis in ('y', 'x'):
+            cuts = _separator_cuts(gray, parent, boxes, axis)
+            if cuts is None:
+                continue
+            children = _slice_by_cuts(parent, boxes, cuts, axis)
+            if children:
+                break
+        result.extend(children if children else [parent])
+    return result
+
+
+def _slice_by_cuts(parent, boxes, cuts, axis):
+    x, y, w, h = parent['box']
+    size = h if axis == 'y' else w
+    edges = [0] + [c for cut in cuts for c in cut] + [size]
+    spans = [(edges[i], edges[i + 1]) for i in range(0, len(edges), 2)]
+    children = []
+    for lo, hi in spans:
+        mask = parent['interior'].copy()
+        if axis == 'y':
+            mask[:lo, :] = 0
+            mask[hi:, :] = 0
+        else:
+            mask[:, :lo] = 0
+            mask[:, hi:] = 0
+        ys, xs = np.nonzero(mask)
+        if not len(xs) or hi - lo < 20 or cv2.countNonZero(mask) < 500:
+            return None
+        left, right, top, bottom = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+        # Each child must hold exactly one text group.
+        held = 0
+        for b in boxes:
+            cx, cy = b[0] + b[2] / 2 - x, b[1] + b[3] / 2 - y
+            if left <= cx < right and top <= cy < bottom:
+                held += 1
+        if held != 1:
+            return None
+        child = dict(parent)
+        child.update(box=[x + int(left), y + int(top), int(right - left), int(bottom - top)],
+                     interior=mask[top:bottom, left:right].copy(),
+                     geometry_evidence='separator_line', parent_box=parent['box'][:])
+        children.append(child)
+    return children
+
+
+def mark_merged_suspects(candidates, detections):
+    """Flag regions still holding several text groups after every splitter ran."""
+    for candidate in candidates:
+        n = len(confident_text_boxes(candidate, detections))
+        if n >= 2 and not candidate.get('parent_box'):
+            candidate['merged_suspect'] = n
+    return candidates
+
+
 def white_core(rgb):
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     # Disconnect scan leaks up to four pixels; larger openings stay review-only.

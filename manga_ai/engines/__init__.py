@@ -20,6 +20,7 @@ class EngineDescriptor:
 _ENGINES={
     'baseline':EngineDescriptor('baseline','baseline-1','Baseline',(),False,'manga_ai.engine','render_clean'),
     '1107':EngineDescriptor('1107','1107-shadow-0.5','1107 — nền chữ liên tục, kiểm tra clean',('models/balloon.onnx','models/comic_ctd.onnx','models/comic_text_int8.onnx','models/face/animeheadsv3.onnx'),True,'manga_ai.engine_1107','render'),
+    'art_draft':EngineDescriptor('art_draft','art-draft-0.1','AI phục hồi nền — NHÁP CẦN KIỂM TRA',('models/comic_ctd.onnx','models/comic_text_int8.onnx','models/lama_manga.onnx'),True,'manga_ai.engine_art_draft','render'),
 }
 
 
@@ -41,6 +42,10 @@ def run_engine(engine_id, manifest, mapping, cancel=None, preview=False, version
     result=handler(manifest,mapping,cancel,preview)
     result=normalize_result(result,mapping)
     result.update(engine_id=d.id,version=d.version,engine_api_version=API_VERSION)
+    if not preview:
+        # One Photoshop layer per cleaned bubble instead of a single page-wide layer.
+        from ..clean_layers import attach_from_manifest
+        attach_from_manifest(result,manifest)
     if preview:
         from .preview import preview_images
         result['images']=preview_images(result,manifest)

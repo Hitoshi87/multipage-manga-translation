@@ -19,6 +19,12 @@ class FakeOrt:
   return FakeSession(providers,fail=providers[0]=='CUDAExecutionProvider')
 
 class HardwareDispatchTests(unittest.TestCase):
+ def test_cuda_preload_excludes_nvblas_shim(self):
+  import manga_ai.hardware as hardware
+  with patch.object(hardware,'_CUDA_PRELOADED',False), patch('glob.glob',return_value=['/tmp/libnvblas.so.13','/tmp/libcublas.so.12']), patch('ctypes.CDLL') as load:
+   hardware._preload_cuda_libs()
+   self.assertEqual(load.call_count,1)
+   self.assertEqual(load.call_args.args[0],'/tmp/libcublas.so.12')
  def test_detection_is_capability_based_and_cpu_safe(self):
   p=['CoreMLExecutionProvider','CPUExecutionProvider'];self.assertEqual(select_providers('Darwin','arm64',p,'text'),['CPUExecutionProvider']);self.assertEqual(select_providers('Darwin','arm64',p,'balloon')[0][0],'CoreMLExecutionProvider')
   self.assertEqual(select_providers('Darwin','x86_64',p,'balloon'),['CPUExecutionProvider'])

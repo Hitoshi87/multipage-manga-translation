@@ -293,7 +293,7 @@ def japanese_bubble_ink(gray, interior):
     return cv2.bitwise_and(cv2.dilate(mask, np.ones((3, 3), np.uint8)), inner)
 
 
-def bubble_shape(candidate):
+def bubble_shape(candidate, gray=None):
     """Outline + exact horizontal interior spans, without reducing an oval to a box."""
     x,y,w,h=candidate["box"]
     mask=candidate["interior"]
@@ -312,7 +312,13 @@ def bubble_shape(candidate):
         if right-left>=12:rows.append([y+yy,x+left,x+right+1])
     if not rows:return outline,None
     left=min(r[1] for r in rows);right=max(r[2] for r in rows)
-    return outline,{"rows":rows,"center":[sx+sw/2,sy+sh/2],"box":[left,rows[0][0],right-left,rows[-1][0]-rows[0][0]+1]}
+    shape={"rows":rows,"center":[sx+sw/2,sy+sh/2],"box":[left,rows[0][0],right-left,rows[-1][0]-rows[0][0]+1]}
+    # A transparent balloon can leave the mask short on one side; extend it only
+    # up to the first dark stroke. Split children and other detectors are skipped.
+    if gray is not None and candidate.get('detector')=='ai_balloon' and not candidate.get('parent_box') and not candidate.get('geometry_evidence'):
+        from .shape_completion import complete_shape
+        shape=complete_shape(shape,candidate["box"],gray)
+    return outline,shape
 
 
 def cjk_region_allowed(text, confidence, touches_edge, ink_ratio, variation, fill):
@@ -432,10 +438,14 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
                 closed=max(matches,key=lambda item:item[0])[1]
                 proposal.update(box=closed['box'][:],interior=closed['interior'].copy())
         if lang.startswith('jpn'):
-            from .bubble_refinement import split_closed_balloons, split_text_groups, recover_text_balloons
+            from .bubble_refinement import split_closed_balloons, split_text_groups, split_vertical_text_groups, split_text_groups_watershed, split_text_groups_separator, mark_merged_suspects, recover_text_balloons
             proposals = split_closed_balloons(rgb, proposals)
             proposals = recover_text_balloons(rgb, proposals, text_detections)
             proposals = split_text_groups(rgb, proposals, text_detections)
+            proposals = split_vertical_text_groups(rgb, proposals, text_detections)
+            proposals = split_text_groups_watershed(rgb, proposals, text_detections)
+            proposals = split_text_groups_separator(rgb, proposals, text_detections)
+            proposals = mark_merged_suspects(proposals, text_detections)
         candidates = []
         for candidate in proposals:
             check_cancel(cancel)
@@ -459,7 +469,7 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
         # Never invent OCR confidence or a clean mask for it.
         if candidate.get('detector') not in ('ai_balloon', 'hybrid_closed_balloon'):
             return
-        outline, shape = bubble_shape(candidate)
+        outline, shape = bubble_shape(candidate, gray)
         _,_,cw,ch = candidate['box']
         regions.append({'outline':outline, 'shape':shape, 'box':candidate['box'],
                         'safe':candidate['safe'], 'source':' '.join(g['text'] for g in group) or '[OCR chưa đọc được]',
@@ -478,7 +488,7 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
         interior = candidate["interior"]
         if lang.startswith('jpn') and candidate.get('detector_confidence',0)>=.9 and w*h<=gray.size*.08:
             from .text_recovery import punctuation_mask, outline_interior
-            outline,shape=bubble_shape(candidate)
+            outline,shape=bubble_shape(candidate,gray)
             polygon=outline_interior({'box':candidate['box'],'outline':outline})
             punctuation=punctuation_mask(rgb[y:y+h,x:x+w],polygon)
             if punctuation:
@@ -629,8 +639,9 @@ def analyse(input_path, out, lang="eng", rtl=True, psm=11, cancel=None, detector
                 ink=(crop_gray<210)&(interior>0)
                 if np.any(ink) and not np.any(ink&(glyph_mask==0)):
                     reasons=[reason for reason in reasons if reason!='Chữ sát viền']
-        outline, shape = bubble_shape(candidate)
+        outline, shape = bubble_shape(candidate, gray)
         regions.append({"outline": outline, "shape": shape, "box": candidate["box"], "safe": candidate["safe"],
+                        **({'merged_suspect': candidate['merged_suspect']} if candidate.get('merged_suspect') else {}),
                         "source": " ".join(g["text"] for g in group),
                         'detector': candidate.get('detector', 'opencv'),
                         'detector_confidence': candidate.get('detector_confidence'),
