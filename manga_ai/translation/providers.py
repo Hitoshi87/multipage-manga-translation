@@ -51,6 +51,9 @@ def openai_compatible(profile, system, payload):
             {'role':'user','content':content}], 'max_tokens':int(profile['max_tokens'])}
     if profile['json_mode']:
         body['response_format'] = {'type':'json_object'}
+    temperature = profile.get('temperature', 0.2)  # low: the same name must come out the same on every run; None omits it
+    if temperature is not None:
+        body['temperature'] = float(temperature)
     if profile['thinking'] != 'default':
         body['thinking'] = {'type':profile['thinking']}
     request = Request(profile['base_url'].rstrip('/') + '/chat/completions',

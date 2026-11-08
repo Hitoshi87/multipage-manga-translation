@@ -36,3 +36,8 @@ class TranslationContractTests(unittest.TestCase):
             self.assertEqual(prompt.count(VIETNAMESE_DIALOGUE),1)
             self.assertIn('Giọng riêng của bộ truyện.',prompt)
             self.assertLess(prompt.index(VIETNAMESE_DIALOGUE),prompt.index('STYLE_PROMPT:'))
+
+
+class NameStabilityTests(unittest.TestCase):
+    def test_prompt_prefers_furigana_reading(self):
+        self.assertIn('romanise the furigana reading', compose({}))

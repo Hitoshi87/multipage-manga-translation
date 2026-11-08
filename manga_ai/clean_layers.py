@@ -126,6 +126,9 @@ def attach_from_manifest(result, manifest_path):
     try:
         from .io import read_json
         regions = {r['id']: r for r in read_json(manifest_path).get('regions', [])}
+        # Flatten the paper first, so the per-bubble layers and the measured shapes use the final overlay.
+        from .paper_finish import finish_result
+        finish_result(result, manifest_path, regions)
         attach_region_layers(result, manifest_path, regions)
         # Balloon extents measured from the cleaned page, for centring the lettering (never raises).
         from .shape_refine import attach_refined_shapes
