@@ -114,10 +114,10 @@ python manga_typesetter.py download-models --profile 1107 --check-only   # kiể
 python manga_typesetter.py download-models --profile 1107                # tải về models/
 ```
 
-Tab **Tự động** cần thêm model **LaMa** (khoảng 206 MB, nằm trong profile `preview`) để vẽ lại nền ở các bong bóng trong suốt hoặc có tranh phía sau. Thiếu model này, máy chỉ dùng engine thường và nhiều bong bóng sẽ không được xoá chữ gốc:
+Tab **Tự động** cần thêm model **LaMa** (206 MB, nằm trong profile `preview`; cả profile này tải khoảng 490 MB vì còn có CTD, mask chữ và Koharu layout) để vẽ lại nền ở các bong bóng trong suốt hoặc có tranh phía sau. Thiếu model này, máy chỉ dùng engine thường và nhiều bong bóng sẽ không được xoá chữ gốc:
 
 ```sh
-python manga_typesetter.py download-models --profile preview --download
+python manga_typesetter.py download-models --profile preview
 ```
 
 Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và model Magi (sắp xếp panel, khoảng **2 GB**, giấy phép phi thương mại), kiểm tra kích thước và SHA-256 theo revision được pin. Magi cần PyTorch và `transformers` đã nằm trong `requirements-ai.txt`; trên NVIDIA hãy cài `torch` bản CUDA trước (bước 5 ở mục 3) rồi mới cài `requirements-ai.txt`. Inference không bao giờ tự tải weights. Các profile `preview`, `assist`, `aot` là tùy chọn. Qwen (nhận diện font) vẫn cài riêng bằng `scripts/setup_heavy_assist.py`. Xem [model manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [notices upstream](models/NOTICE.md).

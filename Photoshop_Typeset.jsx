@@ -1434,7 +1434,7 @@
                 // Never fall back silently: without the AI redraw model many ordinary bubbles will not be cleaned.
                 e=easyEngineById('baseline');
                 if(!e)throw Error('Không tìm thấy engine clean. Bấm "Kiểm tra Python" ở tab Nguồn.');
-                if(!confirm('Chưa có model AI vẽ lại nền (LaMa), nên máy chỉ dùng engine thường. Nhiều bong bóng có thể KHÔNG được xoá chữ gốc.\n\nNên tải model trước, rồi mở lại script:\npython manga_typesetter.py download-models --profile preview --download\n\nVẫn tiếp tục với engine thường?'))throw Error('Đã dừng. Hãy tải model LaMa rồi chạy lại.');
+                if(!confirm('Chưa có model AI vẽ lại nền (LaMa), nên máy chỉ dùng engine thường. Nhiều bong bóng có thể KHÔNG được xoá chữ gốc.\n\nNên tải model trước, rồi mở lại script:\npython manga_typesetter.py download-models --profile preview\n\nVẫn tiếp tục với engine thường?'))throw Error('Đã dừng. Hãy tải model LaMa rồi chạy lại.');
             }
             return e;
         }
