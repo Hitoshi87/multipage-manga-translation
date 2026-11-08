@@ -101,6 +101,9 @@ logs, and `key_status` reports only whether one exists and where it came from.
 
 ## Output: layered Adobe Photoshop PDF first
 
+Export colour is an explicit choice, never hard-set: keep the source mode (default; a greyscale scan stays greyscale and light),
+RGB, or CMYK (Color Settings; about 33% heavier). The choice applies to the PDF, PSD and JPG of the copy.
+
 The deliverable is one Adobe Photoshop PDF per page that keeps every layer (`PDFSaveOptions` with `preserveEditing` and `layers`,
 JPEG high quality, colour profile embedded). It goes to print from there, so there is no separate print export. The automatic tab
 saves that file by default and saves a PSD only when "Lưu thêm file PSD" is ticked. The review dialog opens whichever file a page

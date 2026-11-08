@@ -90,8 +90,13 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
   assert(source.includes('if(easyRunning||(new Date()).getTime()-easyLastEnd<1500)return;'),'a queued second click must not start a second run');
   assert(source.includes('easyRunning=false;easyLastEnd=(new Date()).getTime();'));
   assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
-  assert(source.includes('cmykOutput.value=easyCmyk.value===true'),'CMYK is opt-in in the automatic tab');
-  assert(source.includes('easyCmyk.value=false'));
+  // Export colour is an explicit choice (keep / RGB / CMYK), never a hard-set CMYK.
+  assert(!source.includes('cmykOutput'),'the hard-set CMYK checkbox is gone');
+  assert(source.includes("'Giữ nguyên như ảnh gốc (khuyên dùng)', 'RGB', 'CMYK"),'three colour choices, keeping the source mode first');
+  assert(source.includes('var colorMode = colorRow.add(\'dropdownlist\', undefined, colorChoices); colorMode.selection = 0;'),'default keeps the source mode');
+  assert(source.includes('colorMode.selection=easyColor.selection?easyColor.selection.index:0;'),'the automatic tab passes its choice on');
+  assert(source.includes('wantColor === 2 && copy.mode !== DocumentMode.CMYK')&&source.includes('wantColor === 1 && copy.mode !== DocumentMode.RGB'));
+  assert(source.includes('cmykJpeg:colorModeIndex() === 2'));
   assert(source.includes('pdf_mb:'),'the log records the PDF size');
   assert(source.includes('(result.refined_shapes || {})[region.id]'),'refined balloon shape is used for lettering');
   console.log('One run per click, PDF size choices and refined shape PASS');

@@ -234,7 +234,7 @@ def build_report(project, log_path, out_path=None, title='Báo cáo dịch truy�
         average = sum(sizes) / len(sizes)
         line = f"Dung lượng PDF: trung bình {average:.1f} MB mỗi trang, lớn nhất {max(sizes):.1f} MB, tổng {sum(sizes):.0f} MB."
         if average > 25:
-            line += " PDF giữ layer nhúng cả PSD nên nặng; chọn kiểu PDF Phẳng hoặc tắt CMYK trong tab Tự động để nhẹ hơn."
+            line += " PDF giữ layer nhúng cả PSD nên nặng; chọn kiểu PDF Phẳng, hoặc đặt Màu xuất là RGB hay giữ nguyên thay vì CMYK, trong tab Tự động để nhẹ hơn."
         notes.append(line)
     if log.get('translation_failures'):
         notes.append(f"{len(log['translation_failures'])} nhóm câu dịch lỗi nhiều lần; những câu đó chưa có bản dịch.")

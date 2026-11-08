@@ -138,8 +138,11 @@
         savePdf.helpTip = 'PDF nén JPEG, không giữ layer — dung lượng gần lưu tay. Cần chỉnh sửa lại thì dùng PSD.';
         var pdfLayers = formatRow.add('checkbox', undefined, 'PDF giữ layer (rất nặng)');
         pdfLayers.helpTip = 'Nhúng toàn bộ PSD vào PDF nên file có thể lớn gấp nhiều lần. Chỉ bật khi thật sự cần.';
-        var cmykOutput = typesetTab.add('checkbox', undefined, 'Xuất PSD/PDF/JPG CMYK theo Color Settings của Photoshop'); cmykOutput.value = true;
-        cmykOutput.helpTip = 'Chọn profile CMYK phù hợp nhà in trong Photoshop Color Settings trước khi dùng. PNG xem trước vẫn xuất RGB.';
+        var colorRow = typesetTab.add('group'); colorRow.add('statictext', undefined, 'Màu xuất PSD/PDF/JPG:');
+        var colorChoices = ['Giữ nguyên như ảnh gốc (khuyên dùng)', 'RGB', 'CMYK (theo Color Settings, nặng hơn khoảng 33%)'];
+        var colorMode = colorRow.add('dropdownlist', undefined, colorChoices); colorMode.selection = 0; colorMode.preferredSize.width = 340;
+        colorMode.helpTip = 'Không tự đổi sang CMYK. Giữ nguyên dùng đúng chế độ của ảnh gốc (ảnh xám vẫn là ảnh xám nên nhẹ nhất). Chỉ chọn CMYK khi nhà in yêu cầu và đã đặt profile trong Photoshop Color Settings. PNG xem trước vẫn xuất RGB.';
+        function colorModeIndex() { return colorMode.selection ? colorMode.selection.index : 0; }
         var alreadyClean = engineTab.add('checkbox', undefined, 'Trang đã clean thủ công — chỉ tạo chữ, không thêm lớp clean tự động');
         var engineRow=engineTab.add('group');engineRow.add('statictext',undefined,'Engine clean:');
         var engineChoice=engineRow.add('dropdownlist',undefined,['Baseline']);engineChoice.selection=0;
@@ -162,7 +165,7 @@
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
         var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, leadingAuto,
-                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, cmykOutput, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
+                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         var activeTaskDialog=null;
         function tick(message, fraction) {
             if (message) status.text = message;
@@ -665,15 +668,19 @@
                         }
                     }
                 }
-                if (cmykOutput.value && copy.mode !== DocumentMode.CMYK) {
+                var wantColor = colorModeIndex();      // 0 keep the source mode, 1 RGB, 2 CMYK
+                if (wantColor === 2 && copy.mode !== DocumentMode.CMYK) {
                     tick('Chuyển bản sao sang CMYK theo Color Settings…', 92);
                     copy.changeMode(ChangeMode.CMYK);
+                } else if (wantColor === 1 && copy.mode !== DocumentMode.RGB) {
+                    tick('Chuyển bản sao sang RGB…', 92);
+                    copy.changeMode(ChangeMode.RGB);
                 }
                 s.outputColorMode=String(copy.mode);s.outputColorProfile=null;
                 try { s.outputColorProfile=copy.colorProfileName; } catch (_) {}
                 if (!tick('Chuẩn bị lưu…', 95)) throw Error('Đã hủy trước khi lưu');
                 s.savedFiles = {};
-                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:cmykOutput.value}, onlyClean ? 'clean' : (s.draft?'draft':'typeset'), s.savedFiles) : null;
+                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:colorModeIndex() === 2}, onlyClean ? 'clean' : (s.draft?'draft':'typeset'), s.savedFiles) : null;
                 if (!keepOpen) { copy.close(SaveOptions.DONOTSAVECHANGES); copy = null; }
                 tick((s.manualText.length ? 'Vùng cần clean/duyệt: '+s.manualText.length+'. ' : '') + (saved ? 'Đã lưu: ' + saved.fsName : 'Đã tạo bản sao CLEAN') + MTA.cleanResultSummary(result), 100);
                 return saved ? saved.fsName : '';
@@ -1408,11 +1415,12 @@
         var easyPdfRow=easyTab.add('group');easyPdfRow.add('statictext',undefined,'Kiểu PDF:');
         var easyPdfKind=easyPdfRow.add('dropdownlist',undefined,['Giữ layer (nặng, sửa lại được)','Phẳng (nhẹ, chỉ xem hoặc in)']);easyPdfKind.selection=0;
         easyPdfKind.helpTip='PDF giữ layer nhúng cả PSD nên nặng (một trang lớn có thể hơn 40 MB). PDF phẳng chỉ khoảng vài MB nhưng không sửa lại được.';
-        var easyCmyk=easyPdfRow.add('checkbox',undefined,'Xuất CMYK (nặng hơn khoảng 33%)');easyCmyk.value=false;
-        easyCmyk.helpTip='Mặc định giữ RGB. Chỉ bật khi nhà in yêu cầu CMYK.';
+        easyPdfRow.add('statictext',undefined,'Màu xuất:');
+        var easyColor=easyPdfRow.add('dropdownlist',undefined,colorChoices);easyColor.selection=0;easyColor.preferredSize.width=300;
+        easyColor.helpTip=colorMode.helpTip;
         var easyKeepPsd=easyTab.add('checkbox',undefined,'Lưu thêm file PSD (nặng hơn; mặc định chỉ lưu Photoshop PDF giữ layer)');easyKeepPsd.value=false;
         var easyNote=easyTab.add('statictext',undefined,'',{multiline:true});easyNote.preferredSize=[740,84];
-        controls.push(easyPdfKind,easyCmyk,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
+        controls.push(easyPdfKind,easyColor,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
         function easySay(text){easyNote.text=text;status.text=text;win.update();}
         function easyRefreshKey(){
             try{
@@ -1528,7 +1536,7 @@
                 var count=easyFiles().length;if(!count)throw Error('Thư mục không có ảnh JPG, PNG hoặc PSD.');
                 lang.selection=lang.find('jpn_vert');rtl.value=true;
                 // Output: one Adobe Photoshop PDF per page that keeps every layer (the main file); PSD only if asked.
-                savePdf.value=true;pdfLayers.value=(easyPdfKind.selection?easyPdfKind.selection.index:0)===0;savePsd.value=easyKeepPsd.value===true;cmykOutput.value=easyCmyk.value===true;
+                savePdf.value=true;pdfLayers.value=(easyPdfKind.selection?easyPdfKind.selection.index:0)===0;savePsd.value=easyKeepPsd.value===true;colorMode.selection=easyColor.selection?easyColor.selection.index:0;
                 // No saved font yet: use an installed comic font (Pangolin, then Itim) instead of the Arial default.
                 if(!fontSettingsFile.exists){
                     var comic=chooseFontById(font,'Pangolin-Regular')?'Pangolin-Regular':(chooseFontById(font,'Itim-Regular')?'Itim-Regular':null);
