@@ -1427,6 +1427,8 @@
         var easyActions=easyTab.add('group');
         var easyStart=easyActions.add('button',undefined,'2. Bắt đầu: thử 3 trang rồi chạy cả tập');
         var easyTry=easyActions.add('button',undefined,'Chỉ thử 3 trang');
+        var easyDirect=easyActions.add('button',undefined,'Chạy cả chương ngay');
+        easyDirect.helpTip='Chạy OCR, dịch, clean và chèn ngay, không chạy thử ba trang hay chấm preflight.';
         var easyAfter=easyTab.add('group');
         var easyReport=easyAfter.add('button',undefined,'Mở báo cáo gần nhất');easyReport.enabled=false;
         var easyReview=easyAfter.add('button',undefined,'3. Rà soát nhanh trong Photoshop');
@@ -1438,7 +1440,7 @@
         easyColor.helpTip=colorMode.helpTip;
         var easyKeepPsd=easyTab.add('checkbox',undefined,'Lưu thêm file PSD (nặng hơn; mặc định chỉ lưu Photoshop PDF giữ layer)');easyKeepPsd.value=false;
         var easyNote=easyTab.add('statictext',undefined,'',{multiline:true});easyNote.preferredSize=[740,84];
-        controls.push(easyPdfKind,easyColor,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
+        controls.push(easyPdfKind,easyColor,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyDirect,easyReport,easyReview,easyKeepPsd);
         function easySay(text){easyNote.text=text;status.text=text;win.update();}
         function easyRefreshKey(){
             try{
@@ -1542,20 +1544,23 @@
         };
         easyReport.onClick=function(){if(lastReportHtml){try{(new File(lastReportHtml)).execute();}catch(e){alert('Không mở được báo cáo: '+e.message);}}};
         var easyRunning=false, easyLastEnd=0, easyLastAction=null;
-        function easyRun(sampleOnly){
-            if(!MTA.automaticClickAllowed(easyRunning,easyLastAction,easyLastEnd,sampleOnly,(new Date()).getTime()))return;
+        function easyRun(action){
+            if(!MTA.automaticClickAllowed(easyRunning,easyLastAction,easyLastEnd,action,(new Date()).getTime()))return;
             easyRunning=true;
-            try{easyRunBody(sampleOnly);}
-            finally{easyRunning=false;easyLastAction=sampleOnly;easyLastEnd=(new Date()).getTime();}
+            try{easyRunBody(action);}
+            finally{easyRunning=false;easyLastAction=action;easyLastEnd=(new Date()).getTime();}
         }
-        function easyRunBody(sampleOnly){
+        function easyRunBody(action){
             run(function(){
+                var direct=action==='direct',sampleOnly=action==='sample';
                 if(!easyFolder)throw Error('Hãy chọn thư mục truyện trước.');
                 easySaveApi();
                 // Everything the run needs is checked first, so a missing dependency (Baberu OCR, models, key...)
                 // is reported now with its fix, not hours into the run.
-                var chk=easyEnvCheck();
-                if(chk.bad.length){easySay('Thiếu '+chk.bad.length+' mục bắt buộc; chưa chạy gì cả.');alert('Chưa chạy được vì còn thiếu (máy chưa làm gì cả):\n\n'+chk.bad.join('\n\n')+'\n\nSửa xong bấm "Kiểm tra môi trường" rồi chạy lại.');return;}
+                if(!direct){
+                    var chk=easyEnvCheck();
+                    if(chk.bad.length){easySay('Thiếu '+chk.bad.length+' mục bắt buộc; chưa chạy gì cả.');alert('Chưa chạy được vì còn thiếu (máy chưa làm gì cả):\n\n'+chk.bad.join('\n\n')+'\n\nSửa xong bấm "Kiểm tra môi trường" rồi chạy lại.');return;}
+                }
                 if(!aiDetector.value)throw Error('Chưa có model AI nhận diện bong bóng. Hãy cài model (xem hướng dẫn cài đặt) rồi mở lại script.');
                 var inputFiles=easyFiles(),count=inputFiles.length;if(!count)throw Error('Thư mục không có ảnh JPG, PNG hoặc PSD.');
                 var sourceKey=MTA.sourceProjectKey(easyFolder.fsName,inputFiles);
@@ -1571,8 +1576,10 @@
                 var out=MTA.mkdir(easyOutFolder().fsName);outputFolder=out;outInfo.text=out.fsName;
                 var mode=easyMode.selection?easyMode.selection.index:0;
                 var engine=easyEngine(),escalated=false,decision=null,trial=null;
-                var pick=rpc({operation:'translation_preflight_pick',count:count}).indices;
+                var pick=null;
                 // 1) Preflight on three spread-out pages: weak cleaning escalates to the AI engine once; a hopeless run stops here.
+                if(!direct){
+                pick=rpc({operation:'translation_preflight_pick',count:count}).indices;
                 for(var attempt=0;attempt<2;attempt++){
                     var sub=MTA.mkdir(out.fsName+'/chay_thu_'+(attempt===0?'1':'2_AI')+'/'+MTA.unique());
                     var pf=new File(sub.fsName+'/project.json');
@@ -1594,9 +1601,10 @@
                     alert('Đã chạy xong '+trial.log.length+' trang thử. Chưa chạy cả tập.\n\n'+sampleMessage);
                     if(lastReportHtml){try{(new File(lastReportHtml)).execute();}catch(_){}}return;
                 }
+                }
                 // 2) The whole volume, unattended.
                 if(MTA.sourceProjectKey(easyFolder.fsName,easyFiles())!==sourceKey)throw Error('Danh sách hoặc nội dung ảnh đầu vào đã thay đổi trong khi chạy thử. Hãy chạy lại với bộ ảnh ổn định.');
-                easySay('Đã xong chạy thử. Bắt đầu nhận diện và đọc chữ toàn bộ '+count+' trang; bước này có thể mất thời gian.');
+                easySay((direct?'Bắt đầu trực tiếp. ':'Đã xong chạy thử. ')+'Đang nhận diện và đọc chữ toàn bộ '+count+' trang; bước này có thể mất thời gian.');
                 var projectFile=new File(out.fsName+'/project_'+sourceKey+'.json');
                 var res=runVolume({project:projectFile.fsName,profile:easyProfile(projectFile.fsName,mode),title:'Báo cáo: '+(easyName.text||'bộ truyện'),note:easySay,label:'',engine:engine,folder:easyFolder,output:out});
                 if(res.html){lastReportHtml=res.html;easyReport.enabled=true;}
@@ -1612,8 +1620,9 @@
             var folder=easyOutFolder(),key=MTA.sourceProjectKey(easyFolder.fsName,easyFiles());
             openReview((new File(folder.fsName+'/project_'+key+'.json')).fsName,folder);
         }catch(e){alert('Không mở được rà soát: '+(e.message||e));}};
-        easyStart.onClick=function(){easyRun(false);};
-        easyTry.onClick=function(){easyRun(true);};
+        easyStart.onClick=function(){easyRun('preflight');};
+        easyTry.onClick=function(){easyRun('sample');};
+        easyDirect.onClick=function(){easyRun('direct');};
         loadEngines();easyFillEngines();easyRefreshKey();
         try{easyRenderPlan(rpc({operation:'translation_env_check',key_env:EASY_KEY_ENV}));}catch(_){easyPlan.text='Chưa kiểm tra được môi trường. Bấm "Kiểm tra môi trường".';}
         syncInputs();win.center(); win.show();

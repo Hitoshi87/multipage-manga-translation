@@ -111,6 +111,24 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
   assert(!source.includes('if(pf.exists)pf.remove()'),'sample runs do not erase existing projects');
   assert(source.includes('Chưa chạy cả tập.'),'sample-only completion must not imply the chapter already started');
   assert(source.includes('openReview(projectFile.fsName,out)'),'review opens the current input project');
+  {
+    const calls=[],folder={fsName:'/output'}, directCtx={
+      run:fn=>fn(),easyFolder:{fsName:'/input'},easySaveApi(){calls.push('save-api');},
+      easyEnvCheck(){throw Error('direct run must not execute preflight environment check');},
+      easyFiles:()=>[{fsName:'/input/1.png',length:10}],MTA:{sourceProjectKey:()=> 'key',mkdir:()=>folder},
+      aiDetector:{value:true},lang:{find:()=>({text:'jpn_vert'})},rtl:{},savePdf:{},pdfLayers:{},savePsd:{},colorMode:{},
+      easyPdfKind:{selection:{index:0}},easyKeepPsd:{value:false},easyColor:{selection:{index:0}},fontSettingsFile:{exists:true},
+      easyOutFolder:()=>folder,outInfo:{},easyMode:{selection:{index:0}},easyEngine:()=>({id:'baseline'}),
+      easyProfile:()=>({}),easyName:{text:'test'},easySay(){},easyReport:{},alert(){},
+      File:function(p){this.fsName=p;},
+      rpc(){throw Error('direct run must not call preflight RPC');},
+      runVolume(cfg){calls.push('volume');assert.strictEqual(cfg.folder.fsName,'/input');return {summary:{pages:1,ok:1,look:0,fix:0}};}
+    };
+    vm.createContext(directCtx);
+    vm.runInContext(source.slice(source.indexOf('        function easyRunBody('),source.indexOf('        easyReview.onClick=')),directCtx);
+    directCtx.easyRunBody('direct');
+    assert.deepStrictEqual(calls,['save-api','volume'],'direct action runs the volume once without a trial');
+  }
   assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
   // Export colour is an explicit choice (keep / RGB / CMYK), never a hard-set CMYK.
   assert(!source.includes('cmykOutput'),'the hard-set CMYK checkbox is gone');
