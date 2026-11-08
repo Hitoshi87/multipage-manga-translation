@@ -15,7 +15,7 @@ from .io import read_json
 from .translation import service
 
 # Reasons in plain language, grouped by how urgently a person should act.
-FIX, LOOK = 'fix', 'look'
+FIX, LOOK, NOTE = 'fix', 'look', 'note'
 REASONS = {
     'page_failed': (FIX, 'Trang này chưa làm xong (lỗi khi xử lý)'),
     'clean_skipped': (FIX, 'Chưa xoá được chữ gốc ở bong bóng này'),
@@ -27,16 +27,16 @@ REASONS = {
     'art_inpaint': (LOOK, 'Máy vẽ lại nền, hãy nhìn xem có tự nhiên không'),
     'contrast': (LOOK, 'Chữ trên nền tranh, kiểm tra viền chữ có đọc được'),
     'ocr_suspect': (LOOK, 'Máy có thể đọc sai chữ Nhật'),
-    'needs_review': (LOOK, 'Máy chưa chắc bản dịch'),
+    'needs_review': (NOTE, 'Máy chưa chắc bản dịch'),
     'speaker_unclear': (LOOK, 'Chưa rõ ai nói với ai (cách xưng hô)'),
-    'ambiguous_reference': (LOOK, 'Câu có chỗ mơ hồ'),
+    'ambiguous_reference': (NOTE, 'Câu có chỗ mơ hồ'),
     'glossary_conflict': (LOOK, 'Tên hoặc thuật ngữ chưa thống nhất'),
     'japanese_left': (LOOK, 'Còn chữ Nhật trong bản dịch'),
     'odd_symbols': (LOOK, 'Có ký hiệu lạ'),
-    'dash_added': (LOOK, 'Có dấu gạch dài không có trong bản gốc'),
-    'long_for_bubble': (LOOK, 'Câu khá dài so với bong bóng'),
-    'leading_ellipsis': (LOOK, 'Câu mở đầu bằng dấu …'),
-    'ellipsis_heavy': (LOOK, 'Có nhiều dấu … trong một câu'),
+    'dash_added': (NOTE, 'Có dấu gạch dài không có trong bản gốc'),
+    'long_for_bubble': (NOTE, 'Câu khá dài so với bong bóng'),
+    'leading_ellipsis': (NOTE, 'Câu mở đầu bằng dấu …'),
+    'ellipsis_heavy': (NOTE, 'Có nhiều dấu … trong một câu'),
 }
 STATUS_LABEL = {'ok': 'ỔN', 'look': 'XEM LẠI', 'fix': 'CẦN SỬA'}
 
@@ -46,8 +46,12 @@ def reason_text(code):
 
 
 def severity(codes):
+    """fix > look > note > ok. A note never makes a page "worth a look" by itself."""
     levels = [REASONS.get(c, (LOOK, ''))[0] for c in codes]
-    return FIX if FIX in levels else (LOOK if levels else 'ok')
+    for level in (FIX, LOOK, NOTE):
+        if level in levels:
+            return level
+    return 'ok'
 
 
 def collect_items(log, texts):
@@ -92,7 +96,8 @@ def collect_items(log, texts):
         if page.get('clean_applied', 0) > 0 and page.get('clean_layers', 1) == 0:
             add(None, 'clean_single_layer')
         codes_all = sorted({c for codes in per.values() for c in codes}, key=lambda c: REASONS.get(c, (LOOK, ''))[0])
-        pages.append({'page': pid, 'status': severity(codes_all), 'reasons': codes_all, 'detail': ''})
+        page_level = severity(codes_all)
+        pages.append({'page': pid, 'status': 'ok' if page_level == NOTE else page_level, 'reasons': codes_all, 'detail': ''})
         for region, codes in per.items():
             sev = severity(codes)
             if sev == 'ok':
@@ -100,7 +105,7 @@ def collect_items(log, texts):
             items.append({'page': pid, 'region': region, 'codes': codes, 'severity': sev, 'files': page.get('files', {}),
                           'segment_id': segments.get(region), 'manifest': page.get('manifest'),
                           **texts.get((pid, region), {})})
-    order = {FIX: 0, LOOK: 1}
+    order = {FIX: 0, LOOK: 1, NOTE: 2}
     items.sort(key=lambda i: (order.get(i['severity'], 2), i['page'], str(i['region'])))
     return items, pages
 
@@ -110,7 +115,8 @@ def summarise(pages, items):
     for p in pages:
         counts[p['status']] += 1
     return {'pages': len(pages), 'ok': counts['ok'], 'look': counts['look'], 'fix': counts['fix'],
-            'items_fix': sum(1 for i in items if i['severity'] == FIX), 'items_look': sum(1 for i in items if i['severity'] == LOOK)}
+            'items_fix': sum(1 for i in items if i['severity'] == FIX), 'items_look': sum(1 for i in items if i['severity'] == LOOK),
+            'items_note': sum(1 for i in items if i['severity'] == NOTE)}
 
 
 def _texts(project):
@@ -193,6 +199,15 @@ def render_html(title, summary, pages, items, notes=None):
             detail = f'<div class="jp">{escape(item["detail"])}</div>' if item.get('detail') else ''
             hint = (f'<div class="jp">Trong Photoshop: tìm layer có tên <b>{escape(str(item["region"]))}</b></div>' if item['region'] else '')
             parts.append(f'<div class="item {severity_key}">{image}<div><div class="where">{where}</div>{chips}{vi}{jp}{detail}{hint}</div></div>')
+    notes_group = [i for i in items if i['severity'] == NOTE]
+    if notes_group:
+        parts.append(f'<h2>Ghi chú nhẹ ({len(notes_group)}), không cần làm gì nếu bạn thấy ổn</h2><div class="hint">')
+        for item in notes_group:
+            where = f"Trang {escape(item['page'])}" + (f" · {escape(str(item['region']))}" if item['region'] else '')
+            why = '; '.join(reason_text(c) for c in item['codes'])
+            line = f' — {escape(item["vi"])}' if item.get('vi') else ''
+            parts.append(f'<div><b>{where}</b>: {escape(why)}{line}</div>')
+        parts.append('</div>')
     parts.append('<h2>Tất cả các trang</h2><table><tr><th>Trang</th><th>Tình trạng</th><th>Ghi chú</th></tr>')
     for page in pages:
         notes_text = '; '.join(reason_text(c) for c in page['reasons'][:3])
@@ -214,6 +229,13 @@ def build_report(project, log_path, out_path=None, title='Báo cáo dịch truy�
     notes = []
     if log.get('auto_excluded'):
         notes.append(f"Máy đã tự bỏ qua {log['auto_excluded']} vùng không phải thoại (banner, tựa, bản quyền, chữ ngoài bong bóng).")
+    sizes = [p['pdf_mb'] for p in log.get('pages', []) if isinstance(p.get('pdf_mb'), (int, float))]
+    if sizes:
+        average = sum(sizes) / len(sizes)
+        line = f"Dung lượng PDF: trung bình {average:.1f} MB mỗi trang, lớn nhất {max(sizes):.1f} MB, tổng {sum(sizes):.0f} MB."
+        if average > 25:
+            line += " PDF giữ layer nhúng cả PSD nên nặng; chọn kiểu PDF Phẳng hoặc tắt CMYK trong tab Tự động để nhẹ hơn."
+        notes.append(line)
     if log.get('translation_failures'):
         notes.append(f"{len(log['translation_failures'])} nhóm câu dịch lỗi nhiều lần; những câu đó chưa có bản dịch.")
     out = Path(out_path) if out_path else Path(log_path).with_name('BAO_CAO.html')
@@ -256,6 +278,8 @@ def review_queue(project, log_path, state_path=None):
     done = load_state(state_path) if state_path else {}
     queue = []
     for item in items:
+        if item['severity'] == NOTE:
+            continue
         key = _item_key(item)
         queue.append({'key': key, 'page': item['page'], 'region': item['region'], 'severity': item['severity'],
                       'codes': item['codes'], 'reasons': [reason_text(c) for c in item['codes']],

@@ -74,10 +74,12 @@ def qa_warnings(source, text):
     if ODD_SYMBOLS.search(text):
         result.append('odd_symbols')
     stripped = text.strip()
-    if stripped[:1] in ('\u2026', '.') and re.match(r'^(\u2026|\.{2,})', stripped):
-        result.append('leading_ellipsis')
-    if len(re.findall(r'\u2026|\.{3}', text)) > 1:
-        result.append('ellipsis_heavy')
+    # A line that is only dots is a deliberate silent reaction, not a style problem.
+    if re.search(r'[^\W_]', stripped):
+        if stripped[:1] in ('\u2026', '.') and re.match(r'^(\u2026|\.{2,})', stripped):
+            result.append('leading_ellipsis')
+        if len(re.findall(r'\u2026|\.{3}', text)) > 1:
+            result.append('ellipsis_heavy')
     if len(source.strip()) >= 3 and len(text.strip()) / len(source.strip()) > MAX_LENGTH_RATIO:
         result.append('long_for_bubble')
     return result

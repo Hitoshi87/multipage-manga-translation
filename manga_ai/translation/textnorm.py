@@ -23,7 +23,7 @@ def normalize_symbols(text):
     t = str(text)
     t = re.sub('[「『]', '“', t)
     t = re.sub('[」』]', '”', t)
-    t = t.replace('！', '!').replace('？', '?')
+    t = t.replace('！', '!').replace('？', '?').replace('．', '.')
     t = re.sub('[♡♥♪♫]+', '~', t)
     t = re.sub('[★☆]+', '', t)
     t = re.sub('([^\\s(“‘])“', '\\1 “', t)
@@ -31,8 +31,17 @@ def normalize_symbols(text):
     return t
 
 
+def has_content(text):
+    """True when the text holds letters or digits (not only dots, ! and ?)."""
+    return bool(re.search('[^\\W_]', text))
+
+
 def _tidy_ellipses(text):
     t = _RUN.sub(ELLIPSIS, text)
+    # A bubble that is only an ellipsis is a silent reaction: keep it. Strip a leading
+    # ellipsis only when there is real text after it.
+    if not has_content(t):
+        return t
     t = _LEADING.sub('', t)
     marks = [m.start() for m in re.finditer(ELLIPSIS, t)]
     if len(marks) <= 1:
@@ -94,7 +103,7 @@ def normalize_page(texts, case='sentence'):
     """Normalise bubbles in reading order, moving a leading ellipsis to the previous unfinished bubble."""
     items = [str(t) for t in texts]
     for i in range(1, len(items)):
-        if _LEADING.match(items[i]):
+        if _LEADING.match(items[i]) and has_content(items[i]):
             items[i] = _LEADING.sub('', items[i])
             prev = items[i - 1].rstrip()
             if prev.endswith(','):

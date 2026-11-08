@@ -55,6 +55,38 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(status['06.jpg'], ('ok', []))
         self.assertIn('không tách theo từng bong bóng', reason_text('clean_single_layer'))
 
+    def test_generic_model_doubts_are_light_notes_and_do_not_make_a_page_worth_a_look(self):
+        from manga_ai.report import collect_items, summarise
+        page = dict(self.log['pages'][1], page='07.jpg', review=[{'region_id': 'B009', 'flags': ['ambiguous_reference', 'needs_review']}])
+        items, pages = collect_items({'pages': [page]}, {})
+        self.assertEqual(pages[0]['status'], 'ok')
+        self.assertEqual([i['severity'] for i in items], ['note'])
+        self.assertEqual(summarise(pages, items)['items_note'], 1)
+        # a real problem next to a note still decides the page
+        page2 = dict(page, page='08.jpg', review=[{'region_id': 'B009', 'flags': ['ambiguous_reference', 'speaker_unclear']}])
+        self.assertEqual(collect_items({'pages': [page2]}, {})[1][0]['status'], 'look')
+
+    def test_notes_appear_in_a_quiet_section_and_not_in_the_review_queue(self):
+        from manga_ai.report import review_queue
+        self.log['pages'][1]['review'] = [{'region_id': 'B001', 'flags': ['ambiguous_reference']}]
+        write_json(self.log_path, self.log)
+        html = Path(build_report(self.project, self.log_path)['html']).read_text(encoding='utf8')
+        self.assertIn('Ghi chú nhẹ (1)', html)
+        keys = [i['key'] for i in review_queue(self.project, self.log_path)['items']]
+        self.assertNotIn('02.jpg|B001', keys)
+
+    def test_pdf_size_is_reported_with_a_hint_when_heavy(self):
+        for page in self.log['pages'][:2]:
+            page['pdf_mb'] = 41.0
+        write_json(self.log_path, self.log)
+        html = Path(build_report(self.project, self.log_path)['html']).read_text(encoding='utf8')
+        self.assertIn('Dung lượng PDF: trung bình 41.0 MB mỗi trang', html)
+        self.assertIn('chọn kiểu PDF Phẳng', html)
+        for page in self.log['pages'][:2]:
+            page['pdf_mb'] = 6.0
+        write_json(self.log_path, self.log)
+        self.assertNotIn('chọn kiểu PDF Phẳng', Path(build_report(self.project, self.log_path)['html']).read_text(encoding='utf8'))
+
     def test_items_and_page_status(self):
         items, pages = collect_items(self.log, {})
         status = {p['page']: p['status'] for p in pages}
@@ -66,7 +98,7 @@ class ReportTests(unittest.TestCase):
     def test_html_is_written_with_summary_thumbnails_and_escaped_text(self):
         result = build_report(self.project, self.log_path)
         html = Path(result['html']).read_text(encoding='utf8')
-        self.assertEqual(result['summary'], {'pages': 3, 'ok': 1, 'look': 0, 'fix': 2, 'items_fix': 2, 'items_look': 1})
+        self.assertEqual(result['summary'], {'pages': 3, 'ok': 1, 'look': 0, 'fix': 2, 'items_fix': 2, 'items_look': 1, 'items_note': 0})
         self.assertIn('Cần sửa trước', html)
         self.assertIn('data:image/jpeg;base64,', html)                                   # bubble crop embedded
         self.assertIn('Cảm ơn &lt;3 &amp; &quot;ok&quot;', html)                          # model text is escaped

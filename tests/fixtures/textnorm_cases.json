@@ -1,19 +1,96 @@
 [
-  {"in": "…và nói「Em yêu anh」đi.", "out": "Và nói “Em yêu anh” đi."},
-  {"in": "Ơ... như.... mọi người đều nghe...", "out": "Ơ… như, mọi người đều nghe…"},
-  {"in": "Từ năm nay sẽ hợp nhất. và trở thành trường chung.", "out": "Từ năm nay sẽ hợp nhất. Và trở thành trường chung."},
-  {"in": "thầy ơi!!", "out": "Thầy ơi!!"},
-  {"in": "Ừ nhé♡ giỏi♪♪", "out": "Ừ nhé~ giỏi~"},
-  {"in": "Hay quá★", "out": "Hay quá"},
-  {"in": "Đi vệ sinh — đó là ưu điểm.", "out": "Đi vệ sinh, đó là ưu điểm."},
-  {"in": "Đó mà là ưu điểm…?", "out": "Đó mà là ưu điểm…?"},
-  {"in": "ừ… vậy hả… thôi cũng được…", "out": "Ừ… vậy hả, thôi cũng được…"},
-  {"in": "Giá 1.5 triệu. rẻ quá", "out": "Giá 1.5 triệu. Rẻ quá"},
-  {"in": "“hoàn hảo” vì gánh vác cả Nhật Bản.", "out": "“Hoàn hảo” vì gánh vác cả Nhật Bản."},
-  {"in": "Thầy ơi！？", "out": "Thầy ơi!?"},
-  {"in": "ơi ,  gì vậy ?", "out": "Ơi, gì vậy?"},
-  {"in": "…", "out": ""},
-  {"in": "đã xong chưa...?", "out": "Đã xong chưa…?"},
-  {"in": "thầy ơi", "case": "upper", "out": "THẦY ƠI"},
-  {"in": "thầy ơi", "case": "keep", "out": "thầy ơi"}
+  {
+    "in": "…và nói「Em yêu anh」đi.",
+    "out": "Và nói “Em yêu anh” đi."
+  },
+  {
+    "in": "Ơ... như.... mọi người đều nghe...",
+    "out": "Ơ… như, mọi người đều nghe…"
+  },
+  {
+    "in": "Từ năm nay sẽ hợp nhất. và trở thành trường chung.",
+    "out": "Từ năm nay sẽ hợp nhất. Và trở thành trường chung."
+  },
+  {
+    "in": "thầy ơi!!",
+    "out": "Thầy ơi!!"
+  },
+  {
+    "in": "Ừ nhé♡ giỏi♪♪",
+    "out": "Ừ nhé~ giỏi~"
+  },
+  {
+    "in": "Hay quá★",
+    "out": "Hay quá"
+  },
+  {
+    "in": "Đi vệ sinh — đó là ưu điểm.",
+    "out": "Đi vệ sinh, đó là ưu điểm."
+  },
+  {
+    "in": "Đó mà là ưu điểm…?",
+    "out": "Đó mà là ưu điểm…?"
+  },
+  {
+    "in": "ừ… vậy hả… thôi cũng được…",
+    "out": "Ừ… vậy hả, thôi cũng được…"
+  },
+  {
+    "in": "Giá 1.5 triệu. rẻ quá",
+    "out": "Giá 1.5 triệu. Rẻ quá"
+  },
+  {
+    "in": "“hoàn hảo” vì gánh vác cả Nhật Bản.",
+    "out": "“Hoàn hảo” vì gánh vác cả Nhật Bản."
+  },
+  {
+    "in": "Thầy ơi！？",
+    "out": "Thầy ơi!?"
+  },
+  {
+    "in": "ơi ,  gì vậy ?",
+    "out": "Ơi, gì vậy?"
+  },
+  {
+    "in": "đã xong chưa...?",
+    "out": "Đã xong chưa…?"
+  },
+  {
+    "in": "thầy ơi",
+    "case": "upper",
+    "out": "THẦY ƠI"
+  },
+  {
+    "in": "thầy ơi",
+    "case": "keep",
+    "out": "thầy ơi"
+  },
+  {
+    "in": "…",
+    "out": "…"
+  },
+  {
+    "in": "……",
+    "out": "…"
+  },
+  {
+    "in": "...",
+    "out": "…"
+  },
+  {
+    "in": "．．．",
+    "out": "…"
+  },
+  {
+    "in": "…?",
+    "out": "…?"
+  },
+  {
+    "in": "?!…",
+    "out": "?!…"
+  },
+  {
+    "in": "…ừ",
+    "out": "Ừ"
+  }
 ]

@@ -619,6 +619,9 @@
                         var region = null;
                         for (var k = 0; k < s.data.regions.length; k++) if (s.data.regions[k].id === s.mapping[j].id) region = s.data.regions[k];
                         if (!region) throw Error('Không tìm thấy vùng ' + s.mapping[j].id);
+                        // Centre on the balloon measured from the cleaned page (opaque balloons) instead of the analysis mask.
+                        var refinedShape = (result.refined_shapes || {})[region.id];
+                        if (refinedShape) { var withShape = {}, rk; for (rk in region) withShape[rk] = region[rk]; withShape.shape = refinedShape; region = withShape; }
                         var role = MTA.resolveTextRole(region, (s.mapping[j].display || s.mapping[j].translation), s.mapping[j].font_role, config.automatic);
                         config.font = config.fonts[role];
                         var textLayer;
@@ -682,6 +685,7 @@
             var project=cfg.project;cfg.label=cfg.label||'';
             function loadProject(){return rpc({operation:'translation_load',project:project});}
             function latestRun(data){if(!data.runs.length)throw Error('Chưa có lượt dịch');return data.runs[data.runs.length-1];}
+            function fileMb(path){try{var f=new File(path);return f.exists?Math.round(f.length/104857.6)/10:null;}catch(_){return null;}}
             var srcFolder=cfg.folder||inputFolder,savedOutput=outputFolder,rep2=null,logFile=null,log=[],failed=[];
             if(cfg.output)outputFolder=cfg.output;
             try{
@@ -739,7 +743,7 @@
                         if(!found)throw Error('Thiếu mapping trang');var mf=new File(found.manifest),saved=MJSON.parse(MTA.read(mf));MTA.validateManifest(saved,d.width.as('px'),d.height.as('px'));
                         var s={doc:d,folder:mf.parent,manifestPath:mf.fsName,data:saved,mapping:found.mapping,reviewLines:[],allowOmitted:true,offline:false,engine:chosen,draft:true,draftReview:found.review};
                         build(s,false,true,false);var priority=[];for(var pr=0;pr<found.review.length;pr++)if(found.review[pr].priority==='high')priority.push(found.review[pr]);
-                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles});
+                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
                     }catch(be){log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
                     finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);}
                     var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.write(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
@@ -1401,9 +1405,14 @@
         var easyAfter=easyTab.add('group');
         var easyReport=easyAfter.add('button',undefined,'Mở báo cáo gần nhất');easyReport.enabled=false;
         var easyReview=easyAfter.add('button',undefined,'3. Rà soát nhanh trong Photoshop');
+        var easyPdfRow=easyTab.add('group');easyPdfRow.add('statictext',undefined,'Kiểu PDF:');
+        var easyPdfKind=easyPdfRow.add('dropdownlist',undefined,['Giữ layer (nặng, sửa lại được)','Phẳng (nhẹ, chỉ xem hoặc in)']);easyPdfKind.selection=0;
+        easyPdfKind.helpTip='PDF giữ layer nhúng cả PSD nên nặng (một trang lớn có thể hơn 40 MB). PDF phẳng chỉ khoảng vài MB nhưng không sửa lại được.';
+        var easyCmyk=easyPdfRow.add('checkbox',undefined,'Xuất CMYK (nặng hơn khoảng 33%)');easyCmyk.value=false;
+        easyCmyk.helpTip='Mặc định giữ RGB. Chỉ bật khi nhà in yêu cầu CMYK.';
         var easyKeepPsd=easyTab.add('checkbox',undefined,'Lưu thêm file PSD (nặng hơn; mặc định chỉ lưu Photoshop PDF giữ layer)');easyKeepPsd.value=false;
         var easyNote=easyTab.add('statictext',undefined,'',{multiline:true});easyNote.preferredSize=[740,84];
-        controls.push(easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
+        controls.push(easyPdfKind,easyCmyk,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
         function easySay(text){easyNote.text=text;status.text=text;win.update();}
         function easyRefreshKey(){
             try{
@@ -1500,7 +1509,14 @@
             easySay(n?'Đã chọn '+n+' trang. Bấm "Bắt đầu" khi sẵn sàng.':'Thư mục này không có ảnh JPG, PNG hoặc PSD.');
         };
         easyReport.onClick=function(){if(lastReportHtml){try{(new File(lastReportHtml)).execute();}catch(e){alert('Không mở được báo cáo: '+e.message);}}};
+        var easyRunning=false, easyLastEnd=0;
         function easyRun(sampleOnly){
+            if(easyRunning||(new Date()).getTime()-easyLastEnd<1500)return;
+            easyRunning=true;
+            try{easyRunBody(sampleOnly);}
+            finally{easyRunning=false;easyLastEnd=(new Date()).getTime();}
+        }
+        function easyRunBody(sampleOnly){
             run(function(){
                 if(!easyFolder)throw Error('Hãy chọn thư mục truyện trước.');
                 easySaveApi();
@@ -1512,7 +1528,7 @@
                 var count=easyFiles().length;if(!count)throw Error('Thư mục không có ảnh JPG, PNG hoặc PSD.');
                 lang.selection=lang.find('jpn_vert');rtl.value=true;
                 // Output: one Adobe Photoshop PDF per page that keeps every layer (the main file); PSD only if asked.
-                savePdf.value=true;pdfLayers.value=true;savePsd.value=easyKeepPsd.value===true;
+                savePdf.value=true;pdfLayers.value=(easyPdfKind.selection?easyPdfKind.selection.index:0)===0;savePsd.value=easyKeepPsd.value===true;cmykOutput.value=easyCmyk.value===true;
                 // No saved font yet: use an installed comic font (Pangolin, then Itim) instead of the Arial default.
                 if(!fontSettingsFile.exists){
                     var comic=chooseFontById(font,'Pangolin-Regular')?'Pangolin-Regular':(chooseFontById(font,'Itim-Regular')?'Itim-Regular':null);

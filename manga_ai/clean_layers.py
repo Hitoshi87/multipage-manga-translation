@@ -126,7 +126,11 @@ def attach_from_manifest(result, manifest_path):
     try:
         from .io import read_json
         regions = {r['id']: r for r in read_json(manifest_path).get('regions', [])}
-        return attach_region_layers(result, manifest_path, regions)
+        attach_region_layers(result, manifest_path, regions)
+        # Balloon extents measured from the cleaned page, for centring the lettering (never raises).
+        from .shape_refine import attach_refined_shapes
+        attach_refined_shapes(result, manifest_path, regions)
+        return result
     except Exception as exc:
         result['layer_split'] = 'single'
         result['layer_split_error'] = str(exc)[:160]

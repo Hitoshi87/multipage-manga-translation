@@ -54,7 +54,7 @@ assert(source.includes('p.base_url=easyHost.text;p.model=easyModelName.text;'));
 assert(!source.includes('easyKeyButton'),'the key dialog button was replaced by the key field');
 assert(source.includes("easyKey.text='';"),'the key is cleared from the field once saved');
 // The main output is one layered Adobe Photoshop PDF per page; PSD is optional and off by default.
-assert(source.includes('savePdf.value=true;pdfLayers.value=true;savePsd.value=easyKeepPsd.value===true;'));
+assert(source.includes('savePdf.value=true;pdfLayers.value=(easyPdfKind.selection?easyPdfKind.selection.index:0)===0;savePsd.value=easyKeepPsd.value===true;'),'layered PDF is the default kind; PSD is optional');
 assert(source.includes('easyKeepPsd.value=false'));
 assert(source.includes("chooseFontById(font,'Pangolin-Regular')"),'automatic tab picks an installed comic font');
 // Line spacing is Auto by default; the number is used only when Auto is unticked.
@@ -83,4 +83,16 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
   assert(source.includes("var out=MTA.mkdir(easyOutFolder().fsName)"));
   assert(source.includes('easyEngineChoice.selection?easyEngineChoice.selection.index:0'));
   console.log('Automatic tab environment, engine and output folder PASS');
+}
+
+// One click, one run; PDF size choices are visible; lettering uses the refined balloon when present.
+{
+  assert(source.includes('if(easyRunning||(new Date()).getTime()-easyLastEnd<1500)return;'),'a queued second click must not start a second run');
+  assert(source.includes('easyRunning=false;easyLastEnd=(new Date()).getTime();'));
+  assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
+  assert(source.includes('cmykOutput.value=easyCmyk.value===true'),'CMYK is opt-in in the automatic tab');
+  assert(source.includes('easyCmyk.value=false'));
+  assert(source.includes('pdf_mb:'),'the log records the PDF size');
+  assert(source.includes('(result.refined_shapes || {})[region.id]'),'refined balloon shape is used for lettering');
+  console.log('One run per click, PDF size choices and refined shape PASS');
 }

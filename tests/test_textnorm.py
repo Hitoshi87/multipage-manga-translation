@@ -25,6 +25,13 @@ class TextNormTests(unittest.TestCase):
         normalize_page(original)
         self.assertEqual(original, ['…và nói「Em」đi'])
 
+    def test_a_silent_ellipsis_bubble_is_kept_and_not_flagged(self):
+        for text in ('…', '……', '...', '\uff0e\uff0e\uff0e', '…?', '?!…'):
+            self.assertTrue(normalize_text(text).strip(), text)                    # never blanked
+        self.assertEqual(normalize_page(['Xong rồi.', '…']), ['Xong rồi.', '…'])    # not moved onto the previous bubble
+        self.assertEqual(qa_warnings('\uff0e\uff0e\uff0e\uff0e', '……'), [])
+        self.assertEqual(qa_warnings('\uff0e\uff0e\uff0e', '…'), [])
+
     def test_qa_flags_leading_and_repeated_ellipses(self):
         self.assertIn('leading_ellipsis', qa_warnings('こんにちは', '…và nói'))
         self.assertIn('ellipsis_heavy', qa_warnings('こんにちは', 'Ơ… như… mọi người…'))

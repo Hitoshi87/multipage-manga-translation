@@ -291,14 +291,17 @@ var MTA = (function () {
     function normalizeQuotes(text) {
         return String(text)
             .replace(/[\u300c\u300e]/g,'\u201c').replace(/[\u300d\u300f]/g,'\u201d')
-            .replace(/\uff01/g,'!').replace(/\uff1f/g,'?')
+            .replace(/\uff01/g,'!').replace(/\uff1f/g,'?').replace(/\uff0e/g,'.')
             .replace(/[\u2661\u2665\u266a\u266b]+/g,'~').replace(/[\u2605\u2606]+/g,'')
             .replace(/([^\s(\u201c\u2018\n\r])\u201c/g,'$1 \u201c')
             .replace(/\u201d([^\s.,!?\u2026;:)\u201d\u2019\n\r])/g,'\u201d $1');
     }
     var LETTER=/[A-Za-z\u00c0-\u024f\u1e00-\u1eff\u0300-\u036f]/;
     function tidyEllipses(t) {
-        t=t.replace(/[.\u2026]{2,}/g,'\u2026').replace(/^[\s\u201c\u2018(\u2014\u2013-]*\u2026+\s*/,'');
+        t=t.replace(/[.\u2026]{2,}/g,'\u2026');
+        // A bubble that is only an ellipsis is a silent reaction: keep it. Strip a leading one only before real text.
+        if(!/[0-9A-Za-z\u00c0-\u024f\u1e00-\u1eff]/.test(t))return t;
+        t=t.replace(/^[\s\u201c\u2018(\u2014\u2013-]*\u2026+\s*/,'');
         var marks=[],i;for(i=0;i<t.length;i++)if(t.charAt(i)==='\u2026')marks.push(i);
         if(marks.length<=1)return t;
         var keep={},trimmed=t.replace(/[ !?\u201d\u2019)]+$/,'');
