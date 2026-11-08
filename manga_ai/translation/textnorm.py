@@ -3,11 +3,7 @@
 The saved translation is never changed; these rules only shape what is lettered
 (see normalizeText in scripts/core.jsxinc, kept in step by tests/fixtures/textnorm_cases.json).
 
-Rules follow common Vietnamese scanlation practice:
- - plain symbols only (Japanese brackets and decorative marks are not drawable by comic fonts)
- - at most one ellipsis per bubble (at the end, or after a short interjection); never leading
- - a leading ellipsis may be moved to the end of the previous, unfinished bubble
- - capitalise the first letter of every bubble and of each sentence
+Preserve meaningful symbols and pauses; apply quote, spacing and case conventions.
 """
 import re
 
@@ -24,8 +20,6 @@ def normalize_symbols(text):
     t = re.sub('[「『]', '“', t)
     t = re.sub('[」』]', '”', t)
     t = t.replace('！', '!').replace('？', '?').replace('．', '.')
-    t = re.sub('[♡♥♪♫]+', '~', t)
-    t = re.sub('[★☆]+', '', t)
     t = re.sub('([^\\s(“‘])“', '\\1 “', t)
     t = re.sub('”([^\\s.,!?' + ELLIPSIS + ';:)”’])', '” \\1', t)
     return t
@@ -88,10 +82,8 @@ def normalize_text(text, case='sentence'):
     """case: 'sentence' (capitalise), 'upper' (ALL CAPS font workflow) or 'keep'."""
     t = normalize_symbols(text)
     t = re.sub('[ \\t]+', ' ', t).strip()
-    t = _SPACED_DASH.sub(', ', t)
-    t = _tidy_ellipses(t)
     t = _BEFORE_PUNCT.sub('\\1', t)
-    t = re.sub(',(\\s*,)+', ',', t).strip()
+    t = t.strip()
     if case == 'upper':
         return t.upper()
     if case == 'sentence':
@@ -100,17 +92,5 @@ def normalize_text(text, case='sentence'):
 
 
 def normalize_page(texts, case='sentence'):
-    """Normalise bubbles in reading order, moving a leading ellipsis to the previous unfinished bubble."""
-    items = [str(t) for t in texts]
-    for i in range(1, len(items)):
-        if _LEADING.match(items[i]) and has_content(items[i]):
-            items[i] = _LEADING.sub('', items[i])
-            prev = items[i - 1].rstrip()
-            if prev.endswith(','):
-                items[i - 1] = prev[:-1] + ELLIPSIS
-            elif prev and prev[-1] not in '.!?' + ELLIPSION + ':;”’)':
-                items[i - 1] = prev + ELLIPSIS
-    return [normalize_text(t, case) for t in items]
-
-
-ELLIPSION = ELLIPSIS
+    """Normalize each bubble independently; do not move pauses across segments."""
+    return [normalize_text(t, case) for t in texts]

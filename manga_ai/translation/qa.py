@@ -71,7 +71,10 @@ def qa_warnings(source, text):
     # Very short interjections inflate the ratio, so require some source text.
     if DASH_IN_TEXT.search(text) and not DASH_IN_SOURCE.search(source):
         result.append('dash_added')
-    if ODD_SYMBOLS.search(text):
+    # Source-supported decorative marks are meaningful; only warn about them
+    # when introduced without a matching source mark.
+    if any(not (all(ch in '♡♥♪♫★☆' for ch in m.group()) and all(ch in source for ch in m.group()))
+           for m in ODD_SYMBOLS.finditer(text)):
         result.append('odd_symbols')
     stripped = text.strip()
     # A line that is only dots is a deliberate silent reaction, not a style problem.

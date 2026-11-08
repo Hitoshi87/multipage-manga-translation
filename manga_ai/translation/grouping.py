@@ -11,6 +11,10 @@ def snapshot(segment, version):
             'source_provenance':segment.get('source_provenance'), 'ocr_evidence':segment.get('ocr_evidence'), 'page_id':segment['page_id'],
             'panel_id':segment.get('panel_id'), 'panel_status':segment.get('panel_status','unknown')}
     if segment.get('ruby'):result['ruby']=segment['ruby']
+    raw=segment.get('raw_ocr')
+    if isinstance(raw,str) and raw.strip() and raw.strip()!=segment['jp'].strip():
+        result['ocr_alternative']={'text':raw, 'status':'unverified',
+                                   'origin':(segment.get('ocr_evidence') or {}).get('origin','unknown')}
     return result
 
 
@@ -20,6 +24,7 @@ def payload_for_group(group):
                 'raw_ocr_evidence':t.get('ocr_evidence'), 'source_provenance':t.get('source_provenance'), 'page_id':t.get('page_id'),
                 'panel_id':t.get('panel_id'), 'panel_status':t.get('panel_status','unknown')}
         if t.get('ruby'):result['furigana']=t['ruby']
+        if t.get('ocr_alternative'):result['ocr_alternative']=t['ocr_alternative']
         return result
     result={'task':{'source_language':'ja','target_language':'vi','target_ids':[t['id'] for t in group['targets']]},
             'context_only':[semantic(t) for t in group['context']],

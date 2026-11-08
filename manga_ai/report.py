@@ -21,6 +21,7 @@ REASONS = {
     'clean_skipped': (FIX, 'Chưa xoá được chữ gốc ở bong bóng này'),
     'manual_text': (FIX, 'Chữ đang ẩn, cần xoá chữ gốc bằng tay'),
     'layout_fallback': (FIX, 'Chữ không vừa khung nên đang đặt tạm'),
+    'lettering_needs_review': (LOOK, 'Có đề xuất rút gọn cần đối chiếu nghĩa trước khi dùng'),
     'merged_suspect': (FIX, 'Nghi hai bong bóng bị gộp thành một'),
     'not_translated': (FIX, 'Chưa có bản dịch cho vùng này'),
     'clean_single_layer': (LOOK, 'Phần xoá chữ của trang này nằm chung một layer, không tách theo từng bong bóng'),
@@ -125,7 +126,7 @@ def _texts(project):
     if state['runs']:
         for g in state['runs'][-1]['groups']:
             for v in g['results']:
-                rows[v['id']] = v['semantic_translation']
+                rows[v['id']] = (v.get('lettering_translation') if v.get('lettering_status') == 'human_approved' else None) or v['semantic_translation']
     out = {}
     for page in state['pages']:
         for s in page['segments']:

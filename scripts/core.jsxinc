@@ -283,16 +283,12 @@ var MTA = (function () {
         for(var y=y0;y<y1;y++)rows.push([y,box[0],box[0]+box[2]]);
         return {box:box,center:[box[0]+box[2]/2,box[1]+box[3]/2],rows:rows};
     }
-    // Display-only clean-up: Japanese brackets, decorative marks and full-width forms
-    // are missing from Latin comic fonts and render as boxes. The saved translation
-    // is untouched. normalizeText also applies the lettering conventions (one
-    // ellipsis per bubble, none leading, capitalised sentences); it mirrors
-    // manga_ai/translation/textnorm.py and shares tests/fixtures/textnorm_cases.json.
+    // Display-only quote, whitespace and case conventions, mirrored in Python.
+    // Meaningful punctuation and decorative marks stay in their original bubble.
     function normalizeQuotes(text) {
         return String(text)
             .replace(/[\u300c\u300e]/g,'\u201c').replace(/[\u300d\u300f]/g,'\u201d')
             .replace(/\uff01/g,'!').replace(/\uff1f/g,'?').replace(/\uff0e/g,'.')
-            .replace(/[\u2661\u2665\u266a\u266b]+/g,'~').replace(/[\u2605\u2606]+/g,'')
             .replace(/([^\s(\u201c\u2018\n\r])\u201c/g,'$1 \u201c')
             .replace(/\u201d([^\s.,!?\u2026;:)\u201d\u2019\n\r])/g,'\u201d $1');
     }
@@ -327,8 +323,7 @@ var MTA = (function () {
     }
     function normalizeText(text, caseMode) {
         var t=normalizeQuotes(text).replace(/[ \t]+/g,' ').replace(/^\s+|\s+$/g,'');
-        t=t.replace(/(\S)\s[\u2014\u2013]\s(?=\S)/g,'$1, ');
-        t=tidyEllipses(t).replace(/\s+([,.!?;:\u2026])/g,'$1').replace(/,(\s*,)+/g,',').replace(/^\s+|\s+$/g,'');
+        t=t.replace(/\s+([,.!?;:\u2026])/g,'$1').replace(/^\s+|\s+$/g,'');
         if(caseMode==='upper')return t.toUpperCase();
         if(caseMode==='keep')return t;
         return capitalise(t);
@@ -383,6 +378,20 @@ var MTA = (function () {
                     var lw=measure(plan.lines[li])[0],lt=plan.top+li*plan.lead;
                     if(!shapeRectFits(layoutShape,axis-lw/2,lt,axis+lw/2,lt+plan.rh))ok=false;
                 }
+                if(ok){
+                    // Verify what Photoshop actually placed, not just widths estimated
+                    // around the planned axis. Glyph bearings and line alignment can
+                    // shift individual lines after the whole text block is centred.
+                    t.contents='x';var baseNow=bounds(layer)[3];
+                    t.contents=plan.lines.join('\r');
+                    var actual=bounds(layer);
+                    layer.translate(UnitValue(axis-(actual[0]+actual[2])/2,'px'),
+                                    UnitValue(plan.baseline-baseNow,'px'));
+                    ok=placedLinesFit(layoutShape,plan.lines,plan.lead,function(line){
+                        t.contents=line;return bounds(layer);
+                    });
+                    t.contents=plan.lines.join('\r');
+                }
                 if(ok){best=plan;break;}
                 cap=plan.size*.97;if(cap<options.min)break;
             }
@@ -390,21 +399,15 @@ var MTA = (function () {
             best.content=best.lines.join('\r');
             lastLayoutInfo={id:region.id,size:best.size,fill:best.fill,lines:best.lines.length};
             if(options.dryRun){layer.remove();return null;}
-            center=[best.axis,best.cy];
-            t.size = UnitValue(best.size * 72 / doc.resolution, 'pt');
-            applyLeading(t, lead, best.lead, doc.resolution);
-            // Horizontal: centre the ink on the chosen axis. Vertical: put the first
-            // baseline where the optical-centring plan wants it (not the ink box centre,
-            // which accents and descenders would drag off).
-            t.contents='x';var baseNow=bounds(layer)[3];
-            t.contents = best.content;
             var actual = bounds(layer);
-            layer.translate(UnitValue(center[0] - (actual[0] + actual[2])/2, 'px'),
-                            UnitValue(best.baseline - baseNow, 'px'));
-            actual = bounds(layer);
             if (actual[0] < box[0] - .5 || actual[1] < box[1] - .5 ||
                 actual[2] > box[0]+box[2]+.5 || actual[3] > box[1]+box[3]+.5) throw Error(region.id + ': chữ vượt vùng an toàn');
             layer.move(group, ElementPlacement.INSIDE);
+            var groupedFit=placedLinesFit(layoutShape,best.lines,best.lead,function(line){
+                t.contents=line;return bounds(layer);
+            });
+            t.contents=best.content;
+            if(!groupedFit)throw Error(region.id + ': chữ vượt biên bubble sau khi nhóm layer');
             return layer;
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=previousQuotes; }
@@ -543,6 +546,16 @@ var MTA = (function () {
     }
     function shapeRectFits(shape,left,top,right,bottom) {
         return right-left<=shapeWidth(shape,top,bottom,(left+right)/2)-1;
+    }
+    // getBounds measures each line at the first line's actual Photoshop position.
+    // Later baselines are offset by the configured leading.
+    function placedLinesFit(shape,lines,leading,getBounds) {
+        for(var i=0;i<lines.length;i++){
+            if(!lines[i] || !/\S/.test(lines[i]))continue;
+            var b=getBounds(lines[i]),dy=i*leading;
+            if(!shapeRectFits(shape,b[0],b[1]+dy,b[2],b[3]+dy))return false;
+        }
+        return true;
     }
     // Line breaking with a readability cost. wrapScored returns {cost,lines};
     // wrapToWidths keeps the old lines-only API. Soft penalties only: a break
@@ -757,5 +770,5 @@ var MTA = (function () {
         return savePsd ? psd : pdf;
     }
     return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, confirmChapter: confirmChapter, shell: shell, request: request,
-            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
+            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

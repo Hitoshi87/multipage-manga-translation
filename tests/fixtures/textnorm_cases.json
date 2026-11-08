@@ -1,11 +1,11 @@
 [
   {
     "in": "…và nói「Em yêu anh」đi.",
-    "out": "Và nói “Em yêu anh” đi."
+    "out": "…Và nói “Em yêu anh” đi."
   },
   {
     "in": "Ơ... như.... mọi người đều nghe...",
-    "out": "Ơ… như, mọi người đều nghe…"
+    "out": "Ơ... Như.... Mọi người đều nghe..."
   },
   {
     "in": "Từ năm nay sẽ hợp nhất. và trở thành trường chung.",
@@ -17,15 +17,15 @@
   },
   {
     "in": "Ừ nhé♡ giỏi♪♪",
-    "out": "Ừ nhé~ giỏi~"
+    "out": "Ừ nhé♡ giỏi♪♪"
   },
   {
     "in": "Hay quá★",
-    "out": "Hay quá"
+    "out": "Hay quá★"
   },
   {
     "in": "Đi vệ sinh — đó là ưu điểm.",
-    "out": "Đi vệ sinh, đó là ưu điểm."
+    "out": "Đi vệ sinh — đó là ưu điểm."
   },
   {
     "in": "Đó mà là ưu điểm…?",
@@ -33,7 +33,7 @@
   },
   {
     "in": "ừ… vậy hả… thôi cũng được…",
-    "out": "Ừ… vậy hả, thôi cũng được…"
+    "out": "Ừ… vậy hả… thôi cũng được…"
   },
   {
     "in": "Giá 1.5 triệu. rẻ quá",
@@ -53,7 +53,7 @@
   },
   {
     "in": "đã xong chưa...?",
-    "out": "Đã xong chưa…?"
+    "out": "Đã xong chưa...?"
   },
   {
     "in": "thầy ơi",
@@ -71,15 +71,15 @@
   },
   {
     "in": "……",
-    "out": "…"
+    "out": "……"
   },
   {
     "in": "...",
-    "out": "…"
+    "out": "..."
   },
   {
     "in": "．．．",
-    "out": "…"
+    "out": "..."
   },
   {
     "in": "…?",
@@ -91,6 +91,6 @@
   },
   {
     "in": "…ừ",
-    "out": "Ừ"
+    "out": "…Ừ"
   }
 ]

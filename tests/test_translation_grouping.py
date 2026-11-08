@@ -1,6 +1,6 @@
 import unittest
 from manga_ai.translation.grouping import build_groups,input_chars,payload_for_group
-from manga_ai.translation.service import digest, _quote_consistency
+from manga_ai.translation.service import digest, _quote_consistency, same_source
 
 
 def segment(index, size=400):
@@ -10,6 +10,18 @@ def segment(index, size=400):
 
 
 class GroupingTest(unittest.TestCase):
+    def test_alternative_ocr_reaches_model_as_unverified_evidence(self):
+        s={**segment(1,10),'jp':'正一お前','raw_ocr':'まさ か ず 正一 お前',
+           'ocr_evidence':{'origin':'tesseract'}}
+        group=build_groups([s],version=digest,system='rules',group_size=1,context_segments=0,max_input_chars=2500)[0]
+        alt=payload_for_group(group)['segments'][0]['ocr_alternative']
+        self.assertEqual(alt,{'text':'まさ か ず 正一 お前','status':'unverified','origin':'tesseract'})
+        self.assertTrue(same_source({**group['targets'][0], 'segment_version':None},s))
+        self.assertFalse(same_source(group['targets'][0],{**s,'raw_ocr':'別の OCR'}))
+        same={**s,'raw_ocr':s['jp']}
+        group=build_groups([same],version=digest,system='rules',group_size=1,context_segments=0,max_input_chars=2500)[0]
+        self.assertNotIn('ocr_alternative',payload_for_group(group)['segments'][0])
+
     def test_bounded_complete_chronological_targets_and_past_only_context(self):
         ready=[segment(i) for i in range(17)]
         groups=build_groups(ready,version=digest,system='rules',group_size=7,context_segments=3,max_input_chars=2500)

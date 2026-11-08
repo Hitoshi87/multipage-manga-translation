@@ -48,9 +48,8 @@ class CastTests(unittest.TestCase):
         self.assertTrue(all(i['status'] == 'proposed' for i in items.values()))
         self.assertTrue(cast.apply(self.project)['changed'])
         prompt = compose(service.load(self.project)['profiles'][-1]['values'])
-        self.assertIn('CAST CONTEXT', prompt)
-        self.assertIn('[HINT] Yamabuki', prompt)
-        self.assertIn('calls', prompt)
+        self.assertNotIn('CAST CONTEXT', prompt)
+        self.assertNotIn('Yamabuki', prompt)
         self.assertNotIn('người thấp', prompt)                               # low-confidence hints are left out
         self.assertFalse(cast.apply(self.project)['changed'])                # idempotent
 
@@ -60,7 +59,7 @@ class CastTests(unittest.TestCase):
             cast.set_status(self.project, ['c1', 'c1>c2'], 'confirmed')
             cast.set_status(self.project, ['c2'], 'rejected')
             prompt = compose(service.load(self.project)['profiles'][-1]['values'])
-            self.assertIn('[CONFIRMED] Yamabuki', prompt)
+            self.assertNotIn('[CONFIRMED] Yamabuki', prompt)
             self.assertNotIn('giáo viên', prompt)
             cast.analyse(self.project)                                       # a second analysis keeps human decisions
         items = {i['id']: i for i in service.load(self.project)['cast']['items']}
@@ -83,6 +82,20 @@ class CastTests(unittest.TestCase):
             cast.analyse(self.project, page_limit=1)
         self.assertEqual({s['page'] for s in seen['segments']}, {'page1'})
         self.assertNotIn('image_context', seen)
+
+    def test_old_frozen_cast_prompt_cannot_resume_or_be_sent(self):
+        profile=dict(service.load(self.project)['profiles'][-1]['values'])
+        profile['cast_prompt']='CAST CONTEXT: bí mật từ trang sau'
+        service.save_profile(self.project,profile)
+        run=service.prepare(self.project)['data']
+        state=service.load(self.project)
+        state['runs'][-1]['compiled_system']+='\n'+profile['cast_prompt']
+        service.save(self.project,state)
+        with self.assertRaisesRegex(ValueError,'chưa giới hạn thời gian'):
+            service.run_group(self.project,run['id'],run['groups'][0]['id'])
+        replacement=service.resume_or_prepare(self.project)['data']
+        self.assertNotEqual(replacement['id'],run['id'])
+        self.assertNotIn(profile['cast_prompt'],replacement['compiled_system'])
 
     def test_role_framing_and_empty_cast(self):
         self.assertIn('scanlation team', compose({}))

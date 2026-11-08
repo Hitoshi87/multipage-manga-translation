@@ -46,6 +46,12 @@ def digest(obj):
     return hashlib.sha256(json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def unsafe_cast_snapshot(run, profile):
+    cast_prompt=profile.get('cast_prompt','')
+    compiled=run.get('compiled_system','')
+    return 'CAST CONTEXT (derived from the text;' in compiled or bool(cast_prompt and cast_prompt in compiled)
+
+
 def segment_version(segment):
     fields={key:segment.get(key) for key in ('id','page_id','page_ordinal','region_id','order','panel_id',
         'panel_status','source_revision','source_status','source_provenance')}
@@ -55,6 +61,10 @@ def segment_version(segment):
 
 def same_source(snapshot, current):
     if current is None or current.get('source_revision') != snapshot.get('source_revision'):
+        return False
+    alternative = snapshot.get('ocr_alternative')
+    if alternative and (alternative.get('text') != current.get('raw_ocr') or
+                        alternative.get('origin') != (current.get('ocr_evidence') or {}).get('origin','unknown')):
         return False
     if 'source_status' in snapshot and current.get('source_status') != snapshot['source_status']:
         return False
@@ -360,7 +370,7 @@ def resume_or_prepare(path):
         blocked=[s['id'] for s in segments if not s.get('jp') and s.get('source_status')!='excluded']
         current={s['id']:s for s in segments};targets=[t for g in run['groups'] for t in g['targets']]
         contexts=[t for g in run['groups'] for t in g['context']]
-        if (run.get('compiled_system') and run.get('grouping_version')=='quote_links_v1' and run['profile_revision']==state['profiles'][-1]['revision']
+        if (run.get('compiled_system') and not unsafe_cast_snapshot(run,state['profiles'][-1]['values']) and run.get('grouping_version')=='quote_links_v1' and run['profile_revision']==state['profiles'][-1]['revision']
                 and ready==[t['id'] for t in targets] and blocked==run.get('blocked_ids',[])
                 and all(same_source(t,current.get(t['id'])) for t in targets+contexts)):
             return envelope('prepare','review_required' if blocked else 'completed',run,job_id=run['id'])
@@ -378,6 +388,8 @@ def run_group(path, run_id, group_id, cancel=None):
     if not run.get('compiled_system'):
         raise ValueError('Lượt cũ chưa lưu prompt; tạo lượt dịch mới để giữ đúng provenance')
     profile = next(p for p in state['profiles'] if p['revision']==run['profile_revision'])['values']
+    if unsafe_cast_snapshot(run,profile):
+        raise ValueError('Lượt cũ chứa cast chưa giới hạn thời gian; tạo lượt dịch mới')
     current = {s['id']:s for p in state['pages'] for s in p['segments']}
     if any(not same_source(t,current.get(t['id'])) for t in group['targets'] + group['context']):
         raise ValueError('Nguồn đã thay đổi; tạo run mới')
@@ -517,6 +529,8 @@ def repair_quote_group(path,run_id,group_id,cancel=None):
     group=next((g for g in run['groups'] if g['id']==group_id),None) if run else None
     if not group or group['status']!='completed':raise ValueError('Nhóm chưa dịch xong')
     profile=next(p['values'] for p in state['profiles'] if p['revision']==run['profile_revision'])
+    if unsafe_cast_snapshot(run,profile):
+        raise ValueError('Lượt cũ chứa cast chưa giới hạn thời gian; tạo lượt dịch mới')
     current={s['id']:s for p in state['pages'] for s in p['segments']}
     if state['profiles'][-1]['revision']!=run['profile_revision'] or any(not same_source(t,current.get(t['id'])) for t in group['targets']+group['context']):
         raise ValueError('Nguồn hoặc profile đã thay đổi')
@@ -556,6 +570,8 @@ def repair_quote_group(path,run_id,group_id,cancel=None):
             if _GENDERED_QUOTE.search(proposal['vi']):continue
             row.setdefault('history',[]).append({'text':row['semantic_translation'],'status':row['status'],'reason':'quote_retry','at':now()})
             row['semantic_translation']=proposal['vi'];row['status']='needs_review'
+            row.pop('lettering_translation',None);row.pop('lettering_status',None)
+            row['qa_warnings']=[w for w in row.get('qa_warnings',[]) if w!='lettering_needs_review']
             if 'needs_review' not in row['flags']:row['flags'].append('needs_review')
             changed.append(row['id'])
         _quote_consistency([{'id':r['id'],'vi':r['semantic_translation'],'flags':r['flags']} for r in dest['results']],dest.get('quote_links',[]))
@@ -590,9 +606,29 @@ def accept(path, run_id, edits):
         validate_response(json.dumps({'translations':[{'id':row['id'],'vi':text,'flags':row['flags']}]}),[{'id':row['id'],'jp':segment['jp']}])
         row.setdefault('history',[]).append({'text':row['semantic_translation'],'status':row['status'],'at':now()})
         row.update(semantic_translation=text,status='human_approved',approved_at=now())
+        row.pop('lettering_translation',None);row.pop('lettering_status',None)
+        row['qa_warnings']=[w for w in row.get('qa_warnings',[]) if w!='lettering_needs_review']
         if score is not None: row['manual_quality_score']=score
     save(path,state)
     return envelope('review','completed',{'approved':len(edits)},job_id=run_id)
+
+
+def approve_lettering(path, run_id, segment_id, text):
+    """Approve a lettering candidate independently of the full semantic translation."""
+    state=load(path);run=next(r for r in state['runs'] if r['id']==run_id)
+    if state['profiles'][-1]['revision'] != run['profile_revision']:
+        raise ValueError('Profile đã thay đổi; cần tạo lượt dịch mới')
+    current={s['id']:s for p in state['pages'] for s in p['segments']}
+    group=next((g for g in run['groups'] if any(r['id']==segment_id for r in g['results'])),None)
+    if not group: raise ValueError('Không tìm thấy bản dịch')
+    row=next(r for r in group['results'] if r['id']==segment_id);segment=current.get(segment_id)
+    if not same_source(row,segment) or any(not same_source(c,current.get(c['id'])) for c in group['context']):
+        raise ValueError('Nguồn hoặc ngữ cảnh đã thay đổi')
+    validate_response(json.dumps({'translations':[{'id':segment_id,'vi':text,'flags':[]}]}),[{'id':segment_id,'jp':segment['jp']}])
+    row['lettering_translation']=text;row['lettering_status']='human_approved';row['lettering_approved_at']=now()
+    row['qa_warnings']=[w for w in row.get('qa_warnings',[]) if w!='lettering_needs_review']
+    save(path,state)
+    return envelope('review','completed',{'id':segment_id,'lettering_status':'human_approved'},job_id=run_id)
 
 
 def export_mapping(path, run_id, draft=False):
@@ -619,15 +655,14 @@ def export_mapping(path, run_id, draft=False):
             if row and same_source(row,segment):
                 if segment['region_id'] not in regions or regions[segment['region_id']]['box'] != segment['box']:
                     raise ValueError('Vùng trong manifest đã thay đổi; cần index lại')
-                mapping.append({'id':segment['region_id'],'translation':row['semantic_translation'],'clean':True})
+                text = row.get('lettering_translation') if row.get('lettering_status')=='human_approved' else None
+                mapping.append({'id':segment['region_id'],'translation':text or row['semantic_translation'],'clean':True})
                 if draft:review.append({'region_id':segment['region_id'],'segment_id':segment['id'],
                     'flags':row.get('flags',[]),'translation_status':row['status'],'source_status':segment.get('source_status','unreviewed'),
                     'qa_warnings':row.get('qa_warnings',[]),
                     'merged_suspect':regions[segment['region_id']].get('merged_suspect'),
                     'priority':'high' if row.get('flags') or row.get('source_evidence_error') or row.get('qa_warnings') or regions[segment['region_id']].get('merged_suspect') else 'normal'})
-        # Display text applies lettering conventions across bubbles in reading order
-        # (e.g. a leading ellipsis moves to the end of the previous bubble); the
-        # saved translation itself is left untouched.
+        # Display normalization never moves punctuation between bubbles.
         from .textnorm import normalize_page
         for row,shown in zip(mapping,normalize_page([m['translation'] for m in mapping],'keep')):
             row['display']=shown

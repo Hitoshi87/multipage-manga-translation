@@ -2,6 +2,24 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const ctx={};vm.createContext(ctx);vm.runInContext(fs.readFileSync('scripts/core.jsxinc','utf8'),ctx);
 const {planLayout}=ctx.MTA;
+// A placed block can fit its bounding rectangle while a long middle line crosses
+// a curved bubble boundary. The fixture uses the re-detected shape and PDF word
+// boxes from page 100, in the same 1434x2048 coordinate system.
+{
+  const fixture=JSON.parse(fs.readFileSync('tests/fixtures/lettering_overflow_100.json','utf8'));
+  const lines=['a','b','c','d'], leading=34.79347;
+  const measure=line=>{
+    const i=lines.indexOf(line),b=fixture.pdf_word_boxes[i];
+    return [b[0],b[1]-i*leading,b[2],b[3]-i*leading];
+  };
+  assert.strictEqual(ctx.MTA.placedLinesFit(fixture.shape,lines,leading,measure),false,
+    'the observed third line crossing the bubble must be rejected');
+  const rows=[];for(let y=0;y<100;y++)rows.push([y,0,100]);
+  const shape={rows,box:[0,0,100,100],center:[50,50]};
+  assert.strictEqual(ctx.MTA.placedLinesFit(shape,['a','b'],20,()=>[25,10,75,20]),true);
+  assert.strictEqual(ctx.MTA.placedLinesFit(shape,['a','b'],20,line=>line==='b'?[-1,10,40,20]:[25,10,75,20]),false);
+  console.log('Placed line bounds checked against bubble PASS');
+}
 let calls=0;const unit=s=>{calls++;return s.length*.5;};
 function ellipse(cx,cy,rx,ry,reportedCenter){
   const rows=[];for(let y=Math.ceil(cy-ry)+1;y<Math.floor(cy+ry);y++){
@@ -55,9 +73,9 @@ console.log('Page size cap PASS');
   assert.strictEqual(n('…và nói\u300cEm yêu anh\u300dđi.'),'…và nói \u201cEm yêu anh\u201d đi.');
   assert.strictEqual(n('\u300eMayonaka\u300f'),'\u201cMayonaka\u201d');
   assert.strictEqual(n('Thầy ơi\uff01\uff1f'),'Thầy ơi!?');
-  assert.strictEqual(n('Ừ nhé\u2661'),'Ừ nhé~');
-  assert.strictEqual(n('Giỏi\u266a\u266a'),'Giỏi~');
-  assert.strictEqual(n('Hay quá\u2605'),'Hay quá');
+  assert.strictEqual(n('Ừ nhé\u2661'),'Ừ nhé\u2661');
+  assert.strictEqual(n('Giỏi\u266a\u266a'),'Giỏi\u266a\u266a');
+  assert.strictEqual(n('Hay quá\u2605'),'Hay quá\u2605');
   assert.strictEqual(n('Đã “ổn” rồi.'),'Đã “ổn” rồi.');
   console.log('Quote normalisation PASS');
 }

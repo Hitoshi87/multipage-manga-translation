@@ -715,9 +715,8 @@
                 }
                 // Autopilot: auto-exclude non-dialogue, retry transient errors with backoff,
                 // park groups that keep failing; one slice per request (the bridge waits 180 s).
-                // Optional: infer characters and address terms once from the first pages (hints, not facts).
-                try{tick(cfg.label+'Phân tích nhân vật và xưng hô…',28);rpc({operation:'translation_cast_analyse',project:project});}
-                catch(ce){if(/hủy/.test(String(ce.message)))throw ce;}
+                // Cast extraction is not injected automatically: its first-page
+                // lookahead can disclose future information to earlier groups.
                 var run=null,failed=[],report=null,autoExcluded=0;
                 do{
                     if(!tick(cfg.label+'Dịch tự động'+(report?': '+report.completed+'/'+report.total+' nhóm':'…'),30))throw Error('Đã hủy');
@@ -1051,10 +1050,14 @@
                 for(var n=0;n<rows.length;n++)list.add('item',rows[n].id+' | '+rows[n].status+' ['+rows[n].flags.join(', ')+'] | '+rows[n].semantic_translation.substr(0,50));
                 var jp=r.add('edittext',undefined,'',{multiline:true,readonly:true});jp.preferredSize=[700,60];
                 var vi=r.add('edittext',undefined,'',{multiline:true,scrolling:true});vi.preferredSize=[700,80];
+                r.add('statictext',undefined,'Bản rút gọn để chèn (chỉ dùng sau khi duyệt):');
+                var lettering=r.add('edittext',undefined,'',{multiline:true,scrolling:true});lettering.preferredSize=[700,60];
                 var buttons=r.add('group');buttons.add('statictext',undefined,'Điểm thủ công (1–5, tùy chọn):');var score=buttons.add('edittext',undefined,'');score.characters=3;var approve=buttons.add('button',undefined,'Lưu và xác nhận câu');var qa=buttons.add('button',undefined,'QA nhóm (dùng API)');buttons.add('button',undefined,'Đóng',{name:'cancel'});
+                var approveLettering=buttons.add('button',undefined,'Duyệt bản rút gọn');
                 qa.helpTip='Gợi ý độc lập cùng provider, có thể vẫn sai hoặc trùng thiên lệch; không tự sửa bản dịch.';
-                list.onChange=function(){if(!list.selection)return;var row=rows[list.selection.index];jp.text=source[row.id]?source[row.id].jp:'';if(row.source_evidence)jp.text+='\nVision gợi ý (chưa xác nhận): '+row.source_evidence.main_text+'\nFurigana: '+MJSON.stringify(row.source_evidence.furigana);vi.text=row.semantic_translation;};
-                approve.onClick=function(){try{if(!list.selection)return;var row=rows[list.selection.index];rpc({operation:'translation_accept',project:project,run_id:run.id,edits:[{id:row.id,text:vi.text,quality_score:score.text?Number(score.text):null}]});row.semantic_translation=vi.text;row.status='human_approved';list.selection.text=row.id+' | đã duyệt | '+vi.text.substr(0,50);}catch(e){alert(e.message);}};
+                list.onChange=function(){if(!list.selection)return;var row=rows[list.selection.index];jp.text=source[row.id]?source[row.id].jp:'';if(row.source_evidence)jp.text+='\nVision gợi ý (chưa xác nhận): '+row.source_evidence.main_text+'\nFurigana: '+MJSON.stringify(row.source_evidence.furigana);vi.text=row.semantic_translation;lettering.text=row.lettering_translation||'';};
+                approve.onClick=function(){try{if(!list.selection)return;var row=rows[list.selection.index];rpc({operation:'translation_accept',project:project,run_id:run.id,edits:[{id:row.id,text:vi.text,quality_score:score.text?Number(score.text):null}]});row.semantic_translation=vi.text;row.status='human_approved';row.lettering_translation='';lettering.text='';list.selection.text=row.id+' | đã duyệt | '+vi.text.substr(0,50);}catch(e){alert(e.message);}};
+                approveLettering.onClick=function(){try{if(!list.selection)return;var row=rows[list.selection.index];rpc({operation:'translation_approve_lettering',project:project,run_id:run.id,segment_id:row.id,text:lettering.text});row.lettering_translation=lettering.text;row.lettering_status='human_approved';alert('Đã duyệt bản rút gọn; bản đầy đủ vẫn được giữ.');}catch(e){alert(e.message);}};
                 qa.onClick=function(){try{if(!list.selection)return;var row=rows[list.selection.index];var q=rpc({operation:'translation_review_group',project:project,run_id:run.id,group_id:owners[row.id]}).data;alert('QA chỉ gợi ý, hãy đối chiếu nguồn:\n'+MJSON.stringify(q.issues));}catch(e){alert(e.message);}};
                 list.selection=0;list.onChange();r.show();
             }catch(e){alert(e.message);}};

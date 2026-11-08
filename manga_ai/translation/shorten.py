@@ -3,9 +3,9 @@
 The layout planner (manga_ai.layout_plan, a mirror of the Photoshop planner)
 estimates the size each translation reaches in its balloon. Lines that do not fit
 at all, sit at the minimum size, or end far below the page's normal size are
-sent to the model with a character budget. A rewrite is accepted only if it is
-clearly shorter, has no Japanese left and keeps placeholders; the previous text
-stays in the row history and human-approved lines are never touched.
+sent to the model with a character budget. A rewrite is stored as an unverified
+lettering proposal; only a person can approve it for export. The complete semantic
+translation is retained, and human-approved lines are never rewritten.
 """
 import json
 import math
@@ -106,7 +106,7 @@ def assess(path, run_id=None, font_path=None):
             items.append(item)
             if not reason or len(row['semantic_translation']) <= SHORT_TEXT:
                 continue
-            if row.get('status') == 'human_approved' or row.get('auto_shorten_attempts', 0) >= MAX_ATTEMPTS:
+            if row.get('status') == 'human_approved' or row.get('lettering_status') in ('proposed', 'human_approved') or row.get('auto_shorten_attempts', 0) >= MAX_ATTEMPTS:
                 continue
             target = max(body * .9, lo * 1.3)
             ratio = .65 if size is None else min(.9, max(.55, (size / target) ** 2))
@@ -174,14 +174,23 @@ def auto_shorten(path, run_id=None, font_path=None, *, rounds=2, cancel=None, bu
                     report['rejected'].append({'segment_id': c['segment_id'], 'reason': 'not shorter/clean enough'})
         state = service.load(path)
         run = next(r for r in state['runs'] if r['id'] == (run_id or state['runs'][-1]['id']))
+        original = {c['segment_id']: c['vi'] for c in todo}
+        segments = {s['id']: s for p in state['pages'] for s in p['segments']}
         for g in run['groups']:
             for row in g['results']:
                 if row['id'] in accepted or any(c['segment_id'] == row['id'] for c in todo):
                     row['auto_shorten_attempts'] = row.get('auto_shorten_attempts', 0) + 1
-                if row['id'] in accepted and row.get('status') != 'human_approved':
+                if (row['id'] in accepted and row.get('status') != 'human_approved'
+                        and row.get('semantic_translation') == original[row['id']]
+                        and service.same_source(row, segments.get(row['id']))
+                        and all(service.same_source(c, segments.get(c['id'])) for c in g['context'])):
                     old = row['semantic_translation']
-                    row.setdefault('history', []).append({'text': old, 'status': row['status'], 'at': service.now(), 'reason': 'auto_shorten'})
-                    row['semantic_translation'] = accepted[row['id']]
+                    row['lettering_translation'] = accepted[row['id']]
+                    row['lettering_status'] = 'proposed'
+                    row['status'] = 'needs_review'
+                    warnings = row.setdefault('qa_warnings', [])
+                    if 'lettering_needs_review' not in warnings:
+                        warnings.append('lettering_needs_review')
                     row['auto_shortened'] = {'from': len(old), 'to': len(accepted[row['id']]), 'at': service.now()}
                     report['shortened'].append({'segment_id': row['id'], 'from': len(old), 'to': len(accepted[row['id']])})
         service.save(path, state)

@@ -15,10 +15,11 @@ class TextNormTests(unittest.TestCase):
             self.assertEqual(got, case['out'], case['in'])
             self.assertEqual(normalize_text(got, case.get('case', 'sentence')), got, case['in'])
 
-    def test_leading_ellipsis_moves_to_the_previous_unfinished_bubble(self):
-        self.assertEqual(normalize_page(['Từ giờ, từng người một,', '…và nói đi.']), ['Từ giờ, từng người một…', 'Và nói đi.'])
-        self.assertEqual(normalize_page(['Xong rồi.', '…ừ']), ['Xong rồi.', 'Ừ'])          # finished bubble: just drop it
-        self.assertEqual(normalize_page(['Cậu nói', '…gì thế?']), ['Cậu nói…', 'Gì thế?'])
+    def test_pauses_stay_in_their_original_bubble(self):
+        self.assertEqual(normalize_page(['Từ giờ, từng người một,', '…và nói đi.']), ['Từ giờ, từng người một,', '…Và nói đi.'])
+        self.assertEqual(normalize_page(['Xong rồi.', '…ừ']), ['Xong rồi.', '…Ừ'])
+        self.assertEqual(normalize_page(['Cậu nói', '…gì thế?']), ['Cậu nói', '…Gì thế?'])
+        self.assertEqual(normalize_text('Ừ… ừ… ♡ ♪ ★'), 'Ừ… ừ… ♡ ♪ ★')
 
     def test_stored_translation_is_not_changed_by_display_normalisation(self):
         original = ['…và nói「Em」đi']

@@ -51,16 +51,23 @@ class ShortenTests(unittest.TestCase):
         self.assertEqual([c['region_id'] for c in info['candidates']], ['B001'])
         self.assertLess(info['candidates'][0]['budget'], len(LONG))
 
-    def test_a_clean_shorter_rewrite_is_applied_and_history_kept(self):
+    def test_a_shorter_rewrite_is_a_proposal_until_manually_approved(self):
         def provider(profile, prompt, payload):
             return json.dumps({'items': [{'id': payload['items'][0]['id'], 'vi': SHORT}]}), {}
         with patch.object(service, 'call_provider', side_effect=provider):
             report = shorten.auto_shorten(self.project)
         self.assertEqual(len(report['shortened']), 1)
         row = self.row()
-        self.assertEqual(row['semantic_translation'], SHORT)
-        self.assertEqual(row['history'][-1]['text'], LONG)
-        self.assertEqual(row['history'][-1]['reason'], 'auto_shorten')
+        self.assertEqual(row['semantic_translation'], LONG)
+        self.assertEqual(row['lettering_translation'], SHORT)
+        self.assertEqual(row['lettering_status'], 'proposed')
+        self.assertIn('lettering_needs_review',row['qa_warnings'])
+        before=service.export_mapping(self.project,self.run_id,draft=True)['data']['pages'][0]['mapping'][0]
+        self.assertEqual(before['translation'],LONG)
+        service.approve_lettering(self.project,self.run_id,self.seg['B001'],SHORT)
+        after=service.export_mapping(self.project,self.run_id,draft=True)['data']['pages'][0]['mapping'][0]
+        self.assertEqual(after['translation'],SHORT)
+        self.assertEqual(self.row()['semantic_translation'],LONG)
 
     def test_bad_rewrites_are_rejected(self):
         for bad in (LONG + ' nữa', '短くする', 'Chuyện **này** không đơn giản đâu', ''):

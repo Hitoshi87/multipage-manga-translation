@@ -155,6 +155,8 @@ def dispatch(request):
             return service.repair_quote_group(request['project'],request['run_id'],request['group_id'],request.get('cancel'))
         if action == 'accept':
             return service.accept(request['project'], request['run_id'], request['edits'])
+        if action == 'approve_lettering':
+            return service.approve_lettering(request['project'],request['run_id'],request['segment_id'],request['text'])
         if action == 'mapping':
             return service.export_mapping(request['project'], request['run_id'])
         if action == 'draft_mapping':
@@ -267,13 +269,8 @@ def main(argv=None):
         def show(info):
             print(json.dumps({'group': f"{info['index']}/{info['total']}", 'status': info['status'], 'attempts': info['attempts'],
                               'error': info['error']}, ensure_ascii=False), flush=True)
-        if not args.no_cast:
-            from .translation import cast
-            try:
-                cast.analyse(args.project)
-                print(json.dumps({'cast': cast.apply(args.project)}, ensure_ascii=False), flush=True)
-            except Exception as exc:            # optional step: translation still works without a cast
-                print(json.dumps({'cast': 'skipped', 'reason': str(exc)[:160]}, ensure_ascii=False), flush=True)
+        # Automatic cast lookahead is disabled until facts can be retrieved
+        # with a verified temporal boundary; --no-cast remains accepted.
         report = autopilot.autopilot(args.project, max_attempts=args.max_attempts, auto_exclude=not args.no_exclude, progress=show)
         if report['done'] and not args.no_shorten:
             from .translation import shorten
