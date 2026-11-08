@@ -712,7 +712,7 @@
                     if(!tick(cfg.label+'Dịch tự động'+(report?': '+report.completed+'/'+report.total+' nhóm':'…'),30))throw Error('Đã hủy');
                     var autoRequest={operation:'translation_autopilot',project:project,budget_seconds:140};
                     if(run)autoRequest.run_id=run.id;
-                    report=rpc(autoRequest).data;run={id:report.run_id};
+                    report=rpc(autoRequest);run={id:report.run_id};
                     if(report.auto_excluded)autoExcluded=report.auto_excluded.count;
                 }while(!report.done && !report.aborted);
                 for(var pk=0;pk<report.parked.length;pk++)failed.push({group_id:report.parked[pk].group_id,error:report.parked[pk].error});
@@ -722,7 +722,7 @@
                     var shortened=0,sr=null;
                     do{
                         if(!tick(cfg.label+'Rút gọn dòng quá dài'+(shortened?' ('+shortened+')':'…'),45))throw Error('Đã hủy');
-                        sr=rpc({operation:'translation_auto_shorten',project:project,run_id:run.id,budget_seconds:140}).data;shortened+=sr.shortened.length;
+                        sr=rpc({operation:'translation_auto_shorten',project:project,run_id:run.id,budget_seconds:140});shortened+=sr.shortened.length;
                     }while(!sr.done);
                 }catch(se){if(/hủy/.test(String(se.message)))throw se;failed.push({stage:'auto_shorten',error:String(se.message||se)});}
                 var current=latestRun(loadProject());
@@ -746,7 +746,7 @@
                 }
                 var reportNote='';
                 try{
-                    var rep2=rpc({operation:'translation_report',project:project,log:logFile.fsName,title:cfg.title}).data;
+                    var rep2=rpc({operation:'translation_report',project:project,log:logFile.fsName,title:cfg.title});
                     reportNote=' Báo cáo: '+rep2.summary.ok+' trang ổn, '+rep2.summary.look+' nên xem, '+rep2.summary.fix+' cần sửa.';
                     if(cfg.openReport!==false){try{(new File(rep2.html)).execute();}catch(_){}}
                 }catch(re){reportNote=' (Không tạo được báo cáo: '+String(re.message||re)+')';}
@@ -996,7 +996,7 @@
                 do{
                     var req={operation:'translation_autopilot',project:project,budget_seconds:140};
                     if(runId)req.run_id=runId;
-                    rep=rpc(req).data;runId=rep.run_id;
+                    rep=rpc(req);runId=rep.run_id;
                     note.text='Đang dịch: '+rep.completed+'/'+rep.total+' nhóm'+(rep.parked.length?' — '+rep.parked.length+' nhóm lỗi':'');dlg.update();
                 }while(!rep.done && !rep.aborted);
                 var finalRun=loadProject();finalRun=finalRun.runs[finalRun.runs.length-1];
@@ -1400,7 +1400,7 @@
         function easySay(text){easyNote.text=text;status.text=text;win.update();}
         function easyRefreshKey(){
             try{
-                var k=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV}).data;
+                var k=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV});
                 easyKeyInfo.text=k.present?'Đã có API key ('+(k.source==='env'?'từ biến môi trường':'đã lưu trên máy này')+'). Để trống ô API key nếu không muốn đổi.':'CHƯA CÓ API key: hãy dán key vào ô API key.';
             }catch(e){easyKeyInfo.text='Không kiểm tra được API key.';}
         }
@@ -1459,7 +1459,7 @@
             run(function(){
                 if(!easyFolder)throw Error('Hãy chọn thư mục truyện trước.');
                 easySaveApi();
-                var key=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV}).data;
+                var key=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV});
                 if(!key.present)throw Error('Chưa có API key. Hãy dán key vào ô API key rồi thử lại.');
                 if(!aiDetector.value)throw Error('Chưa có model AI nhận diện bong bóng. Hãy cài model (xem hướng dẫn cài đặt) rồi mở lại script.');
                 var count=easyFiles().length;if(!count)throw Error('Thư mục không có ảnh JPG, PNG hoặc PSD.');
@@ -1475,13 +1475,13 @@
                 var out=MTA.mkdir(easyFolder.fsName+'/_MangaTypesetter');outputFolder=out;outInfo.text=out.fsName;
                 var mode=easyMode.selection?easyMode.selection.index:0;
                 var engine=easyEngine(),escalated=false,decision=null,trial=null;
-                var pick=rpc({operation:'translation_preflight_pick',count:count}).data.indices;
+                var pick=rpc({operation:'translation_preflight_pick',count:count}).indices;
                 // 1) Preflight on three spread-out pages: weak cleaning escalates to the AI engine once; a hopeless run stops here.
                 for(var attempt=0;attempt<2;attempt++){
                     var sub=MTA.mkdir(out.fsName+'/chay_thu_'+(attempt===0?'1':'2_AI'));
                     var pf=new File(sub.fsName+'/project.json');if(pf.exists)pf.remove();
                     trial=runVolume({project:pf.fsName,profile:easyProfile(pf.fsName,mode),title:'Báo cáo chạy thử',note:easySay,label:'[Chạy thử '+(attempt+1)+'] ',engine:engine,folder:easyFolder,indices:pick,output:sub,openReport:false});
-                    decision=rpc({operation:'translation_preflight_decide',pages:trial.log,engine:engine.id,escalated:escalated}).data;
+                    decision=rpc({operation:'translation_preflight_decide',pages:trial.log,engine:engine.id,escalated:escalated});
                     if(trial.html)lastReportHtml=trial.html;
                     if(decision.action==='escalate'){
                         var next=easyEngineById(decision.next_engine);

@@ -101,3 +101,23 @@ class KeyLookupTests(unittest.TestCase):
                 status = providers.key_status('TEST_KEY_X')
                 self.assertTrue(status['present'])
                 self.assertNotIn('secret', json.dumps(status))
+
+
+class BridgeContractTests(unittest.TestCase):
+    """The Photoshop panel reads these results directly (no `.data`); keep them plain dicts."""
+
+    def test_plain_operations_return_dicts_without_a_data_wrapper(self):
+        import os
+        from unittest import mock
+        from manga_ai import cli
+        with mock.patch.dict(os.environ, {'MANGA_TRANSLATION_API_KEY': 'x'}):
+            status = cli.dispatch({'operation': 'translation_key_status', 'key_env': 'MANGA_TRANSLATION_API_KEY'})
+        self.assertEqual((status['present'], status['source']), (True, 'env'))
+        self.assertNotIn('data', status)
+        pick = cli.dispatch({'operation': 'translation_preflight_pick', 'count': 200})
+        self.assertEqual(pick['indices'], [50, 100, 150])
+        self.assertNotIn('data', pick)
+        card = [{'status': 'draft', 'required': 10, 'mapped': 10, 'clean_skipped': [], 'layout_fallback': [], 'manual_text': []}] * 3
+        verdict = cli.dispatch({'operation': 'translation_preflight_decide', 'pages': card, 'engine': 'baseline'})
+        self.assertEqual(verdict['action'], 'go')
+        self.assertNotIn('data', verdict)

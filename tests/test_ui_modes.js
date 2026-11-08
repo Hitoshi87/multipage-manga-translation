@@ -61,3 +61,15 @@ assert(source.includes("chooseFontById(font,'Pangolin-Regular')"),'automatic tab
 assert(source.includes("leadingAuto.value = true"));
 assert(source.includes('autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.05 : Number(leading.text)'));
 console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, dependencies, one review toggle and real preview dispatch PASS');
+
+// rpc() returns response.result as is. Operations returning a plain dict have no `.data`; reading it gives undefined
+// ("undefined is not an object"). Only envelope operations (service.* results) may be followed by `.data`.
+{
+  const plainOps=['translation_key_status','translation_preflight_pick','translation_preflight_decide','translation_autopilot',
+    'translation_auto_shorten','translation_auto_exclude','translation_estimate','translation_report','review_queue','review_mark'];
+  for(const op of plainOps){
+    const uses=source.match(new RegExp("operation:'"+op+"'[^;]*?\\)\\s*\\.data","g"))||[];
+    assert.strictEqual(uses.length,0,op+' returns a plain dict; do not read .data');
+  }
+  console.log('rpc result shape contract PASS');
+}
