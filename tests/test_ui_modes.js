@@ -66,10 +66,21 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
 // ("undefined is not an object"). Only envelope operations (service.* results) may be followed by `.data`.
 {
   const plainOps=['translation_key_status','translation_preflight_pick','translation_preflight_decide','translation_autopilot',
-    'translation_auto_shorten','translation_auto_exclude','translation_estimate','translation_report','review_queue','review_mark'];
+    'translation_auto_shorten','translation_auto_exclude','translation_estimate','translation_report','review_queue','review_mark','translation_env_check'];
   for(const op of plainOps){
     const uses=source.match(new RegExp("operation:'"+op+"'[^;]*?\\)\\s*\\.data","g"))||[];
     assert.strictEqual(uses.length,0,op+' returns a plain dict; do not read .data');
   }
   console.log('rpc result shape contract PASS');
+}
+
+// Fail fast and be explicit: the environment is checked before the run, the plan names the engine and models,
+// and the engine and the output folder are choices the user can see.
+{
+  assert(source.includes("operation:'translation_env_check'"));
+  assert(source.indexOf('var chk=easyEnvCheck();')<source.indexOf('var count=easyFiles().length'),'environment is checked before any work');
+  for(const label of ['Engine xoá chữ:','Kiểm tra môi trường','Đổi thư mục lưu kết quả','Sẽ chạy:'])assert(source.includes(label),label);
+  assert(source.includes("var out=MTA.mkdir(easyOutFolder().fsName)"));
+  assert(source.includes('easyEngineChoice.selection?easyEngineChoice.selection.index:0'));
+  console.log('Automatic tab environment, engine and output folder PASS');
 }

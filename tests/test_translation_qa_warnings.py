@@ -121,3 +121,7 @@ class BridgeContractTests(unittest.TestCase):
         verdict = cli.dispatch({'operation': 'translation_preflight_decide', 'pages': card, 'engine': 'baseline'})
         self.assertEqual(verdict['action'], 'go')
         self.assertNotIn('data', verdict)
+        with mock.patch('manga_ai.environment.check_auto_flow', return_value={'ready': True, 'items': [], 'plan': [], 'engine': 'baseline'}):
+            env = cli.dispatch({'operation': 'translation_env_check'})
+        self.assertEqual(env['engine'], 'baseline')
+        self.assertNotIn('data', env)

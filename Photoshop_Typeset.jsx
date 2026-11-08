@@ -1377,10 +1377,17 @@
         var easyFolderRow=easyTab.add('group');
         var easyChoose=easyFolderRow.add('button',undefined,'1. Chọn thư mục truyện');
         var easyFolderInfo=easyFolderRow.add('statictext',undefined,'Chưa chọn thư mục');easyFolderInfo.characters=62;
+        var easyOutRow=easyTab.add('group');
+        var easyOutChoose=easyOutRow.add('button',undefined,'Đổi thư mục lưu kết quả');
+        var easyOutInfo=easyOutRow.add('statictext',undefined,'Kết quả sẽ lưu cạnh thư mục truyện (chưa chọn thư mục truyện)');easyOutInfo.characters=62;
         var easyNameRow=easyTab.add('group');easyNameRow.add('statictext',undefined,'Tên bộ truyện:');
         var easyName=easyNameRow.add('edittext',undefined,'');easyName.characters=30;
         easyNameRow.add('statictext',undefined,'Chế độ:');
         var easyMode=easyNameRow.add('dropdownlist',undefined,['Nhanh (khuyên dùng)','Chất lượng (đọc cả ảnh, tốn hơn)']);easyMode.selection=0;
+        var easyEngineRow=easyTab.add('group');easyEngineRow.add('statictext',undefined,'Engine xoá chữ:');
+        var easyEngineChoice=easyEngineRow.add('dropdownlist',undefined,['Tự động (khuyên dùng)']);easyEngineChoice.selection=0;easyEngineChoice.preferredSize.width=430;
+        var easyEnvButton=easyEngineRow.add('button',undefined,'Kiểm tra môi trường');
+        var easyPlan=easyTab.add('statictext',undefined,'Đang kiểm tra môi trường…',{multiline:true});easyPlan.preferredSize=[740,70];
         var easyHostRow=easyTab.add('group');var easyHostLabel=easyHostRow.add('statictext',undefined,'Host (địa chỉ API):');easyHostLabel.characters=17;
         var easyHost=easyHostRow.add('edittext',undefined,'https://api.vilao.ai/v1');easyHost.characters=48;
         var easyModelRow=easyTab.add('group');var easyModelLabel=easyModelRow.add('statictext',undefined,'Tên model:');easyModelLabel.characters=17;
@@ -1396,7 +1403,7 @@
         var easyReview=easyAfter.add('button',undefined,'3. Rà soát nhanh trong Photoshop');
         var easyKeepPsd=easyTab.add('checkbox',undefined,'Lưu thêm file PSD (nặng hơn; mặc định chỉ lưu Photoshop PDF giữ layer)');easyKeepPsd.value=false;
         var easyNote=easyTab.add('statictext',undefined,'',{multiline:true});easyNote.preferredSize=[740,84];
-        controls.push(easyChoose,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
+        controls.push(easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyReport,easyReview,easyKeepPsd);
         function easySay(text){easyNote.text=text;status.text=text;win.update();}
         function easyRefreshKey(){
             try{
@@ -1421,14 +1428,52 @@
                 easyKey.text='';       // the key is not kept on screen once saved
             }
             easyRefreshKey();
+            if(lastEnv)easyRenderPlan(lastEnv);
         }
         easyHost.onChange=function(){try{easySaveApi();}catch(e){easySay(e.message);}};
         easyModelName.onChange=easyHost.onChange;
         easyKey.onChange=easyHost.onChange;
+        var easyOutput=null, lastEnv=null;
+        function easyOutFolder(){return easyOutput||new Folder(easyFolder.fsName+'/_MangaTypesetter');}
+        function easyShowOut(){easyOutInfo.text=easyFolder?'Kết quả lưu vào: '+easyOutFolder().fsName:'Kết quả sẽ lưu cạnh thư mục truyện (chưa chọn thư mục truyện)';}
+        function easyFillEngines(){
+            easyEngineChoice.removeAll();
+            easyEngineChoice.add('item','Tự động (khuyên dùng): AI vẽ lại nền nếu có model, không thì engine thường');
+            for(var i=0;i<engines.length;i++)easyEngineChoice.add('item',engines[i].label+' — '+engines[i].version+(engines[i].ready?'':' [thiếu model]'));
+            easyEngineChoice.selection=0;
+        }
+        // What will actually run, in plain words: detector, OCR, clean engine and the translation model.
+        function easyRenderPlan(env){
+            var lines=env.plan.slice(0),sel=easyEngineChoice.selection?easyEngineChoice.selection.index:0;
+            if(sel>0&&engines[sel-1])lines[2]='Xoá chữ: engine '+engines[sel-1].label+' ('+engines[sel-1].id+', '+engines[sel-1].version+')'+(engines[sel-1].ready?'':' — THIẾU MODEL');
+            lines.push('Dịch: '+easyModelName.text+' qua '+easyHost.text+(easyMode.selection&&easyMode.selection.index===1?' (kèm đọc cả ảnh)':''));
+            var missing=[];for(var i=0;i<env.items.length;i++)if(!env.items[i].ok&&env.items[i].required)missing.push(env.items[i].label);
+            easyPlan.text=(missing.length?'THIẾU: '+missing.join('; ')+'. Bấm "Kiểm tra môi trường" để xem cách sửa.\n':'Sẽ chạy:\n')+lines.join('\n');
+        }
+        function easyEnvCheck(){
+            var env=rpc({operation:'translation_env_check',key_env:EASY_KEY_ENV}),bad=[];
+            lastEnv=env;easyRenderPlan(env);
+            for(var i=0;i<env.items.length;i++){var it=env.items[i];if(!it.ok&&it.required)bad.push('- '+it.label+' (thiếu: '+it.missing.join(', ')+')\n  Cách sửa: '+it.fix);}
+            return {env:env,bad:bad};
+        }
+        easyOutChoose.onClick=function(){var f=Folder.selectDialog('Chọn thư mục lưu kết quả');if(!f)return;easyOutput=f;easyShowOut();};
+        easyEnvButton.onClick=function(){run(function(){
+            var chk=easyEnvCheck(),recommend=[];
+            for(var i=0;i<chk.env.items.length;i++){var it=chk.env.items[i];if(!it.ok&&!it.required)recommend.push('- '+it.label+' (thiếu: '+it.missing.join(', ')+')\n  Cách sửa: '+it.fix);}
+            alert((chk.bad.length?'Còn thiếu (bắt buộc):\n\n'+chk.bad.join('\n\n'):'Môi trường đủ để chạy.')+(recommend.length?'\n\nNên có thêm:\n\n'+recommend.join('\n\n'):'')+'\n\n'+easyPlan.text);
+        });};
+        easyEngineChoice.onChange=function(){if(lastEnv)easyRenderPlan(lastEnv);};
+        easyMode.onChange=easyEngineChoice.onChange;
         function easyFiles(){return easyFolder?easyFolder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}):[];}
         // Prefer the AI redraw engine so ordinary bubbles are cleaned, not skipped; redrawn areas are flagged for review.
         function easyEngineById(id){for(var i=0;i<engines.length;i++)if(engines[i].id===id&&engines[i].ready)return {id:id,version:engines[i].version};return null;}
         function easyEngine(){
+            var sel=easyEngineChoice.selection?easyEngineChoice.selection.index:0;
+            if(sel>0){
+                var chosen=engines[sel-1];
+                if(!chosen.ready)throw Error('Engine '+chosen.label+' thiếu model: '+(chosen.missing_models||[]).join(', '));
+                return {id:chosen.id,version:chosen.version};
+            }
             var e=easyEngineById('art_draft');
             if(!e){
                 // Never fall back silently: without the AI redraw model many ordinary bubbles will not be cleaned.
@@ -1450,7 +1495,7 @@
         easyChoose.onClick=function(){
             var f=Folder.selectDialog('Chọn thư mục chứa ảnh truyện (JPG, PNG hoặc PSD)');if(!f)return;
             easyFolder=f;var n=easyFiles().length;
-            easyFolderInfo.text=f.fsName+' — '+n+' trang';
+            easyFolderInfo.text=f.fsName+' — '+n+' trang';easyShowOut();
             if(!easyName.text)easyName.text=decodeURI(f.name);
             easySay(n?'Đã chọn '+n+' trang. Bấm "Bắt đầu" khi sẵn sàng.':'Thư mục này không có ảnh JPG, PNG hoặc PSD.');
         };
@@ -1459,8 +1504,10 @@
             run(function(){
                 if(!easyFolder)throw Error('Hãy chọn thư mục truyện trước.');
                 easySaveApi();
-                var key=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV});
-                if(!key.present)throw Error('Chưa có API key. Hãy dán key vào ô API key rồi thử lại.');
+                // Everything the run needs is checked first, so a missing dependency (Baberu OCR, models, key...)
+                // is reported now with its fix, not hours into the run.
+                var chk=easyEnvCheck();
+                if(chk.bad.length){easySay('Thiếu '+chk.bad.length+' mục bắt buộc; chưa chạy gì cả.');alert('Chưa chạy được vì còn thiếu (máy chưa làm gì cả):\n\n'+chk.bad.join('\n\n')+'\n\nSửa xong bấm "Kiểm tra môi trường" rồi chạy lại.');return;}
                 if(!aiDetector.value)throw Error('Chưa có model AI nhận diện bong bóng. Hãy cài model (xem hướng dẫn cài đặt) rồi mở lại script.');
                 var count=easyFiles().length;if(!count)throw Error('Thư mục không có ảnh JPG, PNG hoặc PSD.');
                 lang.selection=lang.find('jpn_vert');rtl.value=true;
@@ -1472,7 +1519,7 @@
                     if(comic){chooseFontById(boxFont,comic);chooseFontById(shoutFont,comic);}
                     else easySay('Chưa cài font comic (Pangolin hoặc Itim) nên chữ sẽ dùng '+font.selection.text+'. Cài font trong thư mục assets/fonts rồi mở lại script để đẹp hơn.');
                 }
-                var out=MTA.mkdir(easyFolder.fsName+'/_MangaTypesetter');outputFolder=out;outInfo.text=out.fsName;
+                var out=MTA.mkdir(easyOutFolder().fsName);outputFolder=out;outInfo.text=out.fsName;
                 var mode=easyMode.selection?easyMode.selection.index:0;
                 var engine=easyEngine(),escalated=false,decision=null,trial=null;
                 var pick=rpc({operation:'translation_preflight_pick',count:count}).indices;
@@ -1507,7 +1554,9 @@
         easyReview.onClick=function(){try{openReview();}catch(e){alert('Không mở được rà soát: '+(e.message||e));}};
         easyStart.onClick=function(){easyRun(false);};
         easyTry.onClick=function(){easyRun(true);};
-        loadEngines();easyRefreshKey();syncInputs();win.center(); win.show();
+        loadEngines();easyFillEngines();easyRefreshKey();
+        try{easyRenderPlan(rpc({operation:'translation_env_check',key_env:EASY_KEY_ENV}));}catch(_){easyPlan.text='Chưa kiểm tra được môi trường. Bấm "Kiểm tra môi trường".';}
+        syncInputs();win.center(); win.show();
     } catch (e) { alert('Manga Typesetter AI: ' + e.message + (e.line ? '\nDòng: ' + e.line : '')); }
     finally {
         app.preferences.rulerUnits = oldRuler; app.preferences.typeUnits = oldType; app.displayDialogs = oldDialogs;

@@ -114,6 +114,14 @@ python manga_typesetter.py download-models --profile 1107 --check-only   # kiể
 python manga_typesetter.py download-models --profile 1107                # tải về models/
 ```
 
+Luồng **Tự động** còn cần **Baberu OCR** (đọc chữ Nhật, profile `assist`):
+
+```sh
+python manga_typesetter.py download-models --profile assist
+```
+
+Bấm **Kiểm tra môi trường** trong tab Tự động để biết còn thiếu gì. Máy cũng tự kiểm tra tất cả điều kiện (thư viện, Tesseract `jpn_vert`, model nhận diện, Baberu OCR, API key) **trước khi làm bất cứ việc gì**, và liệt kê đủ mọi mục thiếu kèm lệnh sửa, thay vì báo lỗi giữa chừng.
+
 Tab **Tự động** cần thêm model **LaMa** (206 MB, nằm trong profile `preview`; cả profile này tải khoảng 490 MB vì còn có CTD, mask chữ và Koharu layout) để vẽ lại nền ở các bong bóng trong suốt hoặc có tranh phía sau. Thiếu model này, máy chỉ dùng engine thường và nhiều bong bóng sẽ không được xoá chữ gốc:
 
 ```sh
@@ -136,9 +144,9 @@ Báo cáo `ready: true` nghĩa là đủ package, Tesseract và ngôn ngữ OCR.
 
 ### Thử nhanh bằng tab "Tự động" (người mới)
 
-1. Mở Photoshop, chạy `Photoshop_Typeset.jsx`. Tab đầu tiên là **Tự động (khuyên dùng)**.
+1. Mở Photoshop, chạy `Photoshop_Typeset.jsx`. Tab đầu tiên là **Tự động (khuyên dùng)**. Dòng **Sẽ chạy** cho biết đúng engine và model nào được dùng (nhận diện, Baberu OCR, engine xoá chữ, model dịch); có thể chọn engine khác ở ô **Engine xoá chữ**.
 2. Cài font trong `assets/fonts/` vào máy (Pangolin là font mặc định của tab này) rồi mở lại Photoshop. Điền **Host**, **Tên model** và **API key** (key chỉ cần dán một lần, được lưu trên máy này và xoá khỏi ô sau khi lưu).
-3. Bấm **Chọn thư mục truyện** (JPG, PNG hoặc PSD, mỗi trang một file), kiểm tra tên bộ truyện.
+3. Bấm **Chọn thư mục truyện** (JPG, PNG hoặc PSD, mỗi trang một file), kiểm tra tên bộ truyện. Kết quả mặc định lưu vào `_MangaTypesetter/` cạnh thư mục truyện; bấm **Đổi thư mục lưu kết quả** để chọn nơi khác.
 4. Bấm **Chỉ thử 3 trang** trước. Máy làm thử 3 trang rải trong tập, rồi báo có nên chạy cả tập không. Nếu ổn, bấm **Bắt đầu** để chạy cả tập; có thể làm việc khác, Photoshop sẽ báo khi xong.
 5. Kết quả nằm trong `_MangaTypesetter/` cạnh thư mục truyện: mỗi trang một Adobe Photoshop PDF giữ layer (nhóm `CLEAN — từng bubble` và `TYPESET — Tiếng Việt`), cùng báo cáo `BAO_CAO.html` liệt kê chỗ cần xem. Bấm **Rà soát nhanh** để sửa từng bong bóng ngay trong Photoshop.
 

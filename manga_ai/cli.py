@@ -109,6 +109,9 @@ def dispatch(request):
         if action == 'review_mark':
             from .report import mark_reviewed
             return {'marked': mark_reviewed(request['state'], request['keys'], request.get('status', 'done'))}
+        if action == 'env_check':
+            from .environment import check_auto_flow
+            return check_auto_flow(key_env=request.get('key_env','MANGA_TRANSLATION_API_KEY'))
         if action == 'key_status':
             from .translation.providers import key_status
             return key_status(request.get('key_env','MANGA_TRANSLATION_API_KEY'))
