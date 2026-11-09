@@ -254,17 +254,37 @@ def main(argv=None):
     if args.request:
         if not args.response:
             parser.error("--response bắt buộc với --request")
-        try:
-            result = dispatch(read_json(args.request))
-            response = {"ok": True, "result": result}
-            code = 0
-        except Exception as exc:
-            traceback.print_exc()
-            if os.name=='nt':
-                with (args.request.parent/'worker.log').open('a',encoding='utf-8') as log:
-                    log.write(traceback.format_exc())
-            response = {"ok": False, "error": str(exc), "type": type(exc).__name__}
-            code = 1
+        from .worker_heartbeat import heartbeat
+        import time
+        started = time.monotonic()
+        def worker_log(message):
+            if os.name == 'nt':
+                try:
+                    with (args.request.parent/'worker.log').open('a',encoding='utf-8') as log:
+                        log.write(message+'\n')
+                except OSError:
+                    pass
+            else:
+                print(message, flush=True)
+        with heartbeat(args.request.parent/'heartbeat'):
+            try:
+                request = read_json(args.request)
+                operation = str(request.get('operation', 'unknown'))[:80]
+                worker_log('Worker bắt đầu: '+operation)
+                result = dispatch(request)
+                response = {"ok": True, "result": result}
+                code = 0
+            except Exception as exc:
+                traceback.print_exc()
+                if os.name=='nt':
+                    try:
+                        with (args.request.parent/'worker.log').open('a',encoding='utf-8') as log:
+                            log.write(traceback.format_exc())
+                    except OSError:
+                        pass
+                response = {"ok": False, "error": str(exc), "type": type(exc).__name__}
+                code = 1
+            worker_log('Worker kết thúc: '+str(code)+'; thời gian '+str(round(time.monotonic()-started,1))+' giây')
         write_json(args.response, response)
         return code
     if args.command == "translate":

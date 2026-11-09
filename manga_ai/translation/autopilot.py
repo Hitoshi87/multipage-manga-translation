@@ -79,7 +79,8 @@ def autopilot(path, run_id=None, *, max_attempts=3, budget_seconds=None, max_con
     """Translate every pending group of the latest (or given) run.
 
     Returns a report; `done` is True when nothing is left to do (all groups
-    completed or parked after `max_attempts` failures).
+    completed or parked after `max_attempts` failures). The time budget is
+    checked between calls and cannot interrupt a provider call already in flight.
     """
     started = now()
     if max_groups is not None and (type(max_groups) is not int or max_groups < 1):

@@ -113,6 +113,7 @@ var MTA = (function () {
         var input = new File(dir.fsName + '/request.json');
         var output = new File(dir.fsName + '/response.json');
         var cancel = new File(dir.fsName + '/cancel');
+        var heartbeatPath = dir.fsName + '/heartbeat';
         payload.cancel = cancel.fsName;
         write(input, MJSON.stringify(payload));
         var accel = payload.accel || 'auto';
@@ -135,12 +136,28 @@ var MTA = (function () {
                 ' --response ' + shell(output.fsName) + ' > ' + shell(dir.fsName + '/worker.log') + ' 2>&1 &';
             app.system('/bin/sh -c ' + shell(command));
         }
-        var start = (new Date()).getTime();
+        var start = (new Date()).getTime(), lastSignal = start, lastNoticeMinute = 0, sawHeartbeat = false;
         while (!output.exists) {
-            if (tick && tick() === false) { write(cancel, 'cancel'); throw Error('Đã hủy; backend sẽ dừng tại điểm an toàn.'); }
-            if ((new Date()).getTime() - start > 180000) {
+            var now = (new Date()).getTime(), beat = new File(heartbeatPath);
+            if (beat.exists && beat.modified) {
+                var beatTime = beat.modified.getTime();
+                if (isFinite(beatTime) && beatTime >= start - 5000 && beatTime <= now + 5000) {
+                    sawHeartbeat = true;
+                    if (beatTime > lastSignal) lastSignal = beatTime;
+                }
+            }
+            var minute = Math.floor((now - start) / 60000), note = null;
+            if (sawHeartbeat && minute >= 3 && minute !== lastNoticeMinute && now - lastSignal <= 180000) {
+                note = 'Python còn gửi tín hiệu, đã chờ ' + minute + ' phút; có thể hủy nếu cần.';
+                lastNoticeMinute = minute;
+            }
+            if (tick && tick(note) === false) { write(cancel, 'cancel'); throw Error('Đã hủy; backend sẽ dừng tại điểm an toàn.'); }
+            if (now - lastSignal > 180000) {
+                if (output.exists) break;
                 write(cancel, 'timeout');
-                throw Error('Python không phản hồi trong 180 giây. Xem ' + dir.fsName + '/worker.log; có thể dùng CLI tiền xử lý.');
+                var lost = Error('Python không có tín hiệu trong 180 giây (' + String(payload.operation || 'không rõ bước') + '). Đã yêu cầu dừng; kiểm tra worker đã kết thúc trước khi chạy lại. Xem ' + dir.fsName + '/worker.log và request.json. Các trang đã xuất vẫn được giữ.');
+                lost.workerUnresponsive = true;
+                throw lost;
             }
             $.sleep(120);
         }
@@ -150,6 +167,7 @@ var MTA = (function () {
             if (input.remove) input.remove();
             if (output.remove) output.remove();
             if (cancel.remove) cancel.remove();
+            var beatFile = new File(heartbeatPath); if (beatFile.exists && beatFile.remove) beatFile.remove();
             var logFile = new File(dir.fsName + '/worker.log'); if (logFile.exists && logFile.remove) logFile.remove();
             var vbsFile = new File(dir.fsName + '/launch.vbs'); if (vbsFile.exists && vbsFile.remove) vbsFile.remove();
             if (dir.remove) dir.remove();
@@ -751,7 +769,7 @@ var MTA = (function () {
         var savePsd = exports.psd !== false, savePdf = exports.pdf === true;
         if (!savePsd && !savePdf) throw Error('Chọn ít nhất một định dạng: PSD hoặc Photoshop PDF.');
         base = base.replace(/\.[^.]+$/, '').replace(/[\/:\x00-\x1f]/g, '_');
-        var suffix = kind === 'clean' ? '_clean' : (kind === 'draft' ? '_DRAFT' : '_typeset');
+        var suffix = kind === 'chapter' ? '' : (kind === 'clean' ? '_clean' : (kind === 'draft' ? '_DRAFT' : '_typeset'));
         var name = base + suffix, n = 1;
         while (new File(folder.fsName + '/' + name + '.psd').exists ||
                new File(folder.fsName + '/' + name + '.pdf').exists ||

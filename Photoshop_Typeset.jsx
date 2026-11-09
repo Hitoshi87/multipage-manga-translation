@@ -191,7 +191,7 @@
             if (typeof hwChoice !== 'undefined' && hwChoice && hwChoice.selection) {
                 payload.accel = ['auto', 'cpu', 'coreml', 'cuda'][hwChoice.selection.index];
             }
-            return MTA.request(root, payload, function () { return tick(); });
+            return MTA.request(root, payload, function (message) { return message ? tick(message) : tick(); });
         }
         function currentEngineId(){var e=engineChoice.selection?engines[engineChoice.selection.index]:null;return e?e.id:'baseline';}
         function featureReady(name){return !!(uiFeatures[name] && uiFeatures[name].ready);}
@@ -579,7 +579,7 @@
             var config = onlyClean ? null : options(s.doc), result, copy = null;
             try { result = prepareClean(s, onlyClean); }
             catch (cleanError) {
-                if (!s.visibleFallback || cancelled) throw cleanError;
+                if (!s.visibleFallback || cancelled || cleanError.workerUnresponsive) throw cleanError;
                 s.cleanError = String(cleanError.message || cleanError);
                 var skippedClean = [], blockedClean = {};
                 for (var ci = 0; ci < s.mapping.length; ci++) if (s.mapping[ci].translation.replace(/\s/g, '') && s.mapping[ci].clean) {
@@ -684,7 +684,7 @@
                 try { s.outputColorProfile=copy.colorProfileName; } catch (_) {}
                 if (!tick('Chuẩn bị lưu…', 95)) throw Error('Đã hủy trước khi lưu');
                 s.savedFiles = {};
-                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:colorModeIndex() === 2}, onlyClean ? 'clean' : (s.draft?'draft':'typeset'), s.savedFiles) : null;
+                var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:colorModeIndex() === 2}, onlyClean ? 'clean' : (s.chapterOutput?'chapter':(s.draft?'draft':'typeset')), s.savedFiles) : null;
                 if (!keepOpen) { copy.close(SaveOptions.DONOTSAVECHANGES); copy = null; }
                 tick((s.manualText.length ? 'Vùng cần clean/duyệt: '+s.manualText.length+'. ' : '') + (saved ? 'Đã lưu: ' + saved.fsName : 'Đã tạo bản sao CLEAN') + MTA.cleanResultSummary(result), 100);
                 return saved ? saved.fsName : '';
@@ -747,11 +747,11 @@
                             try{
                                 var numeric;
                                 do{numeric=rpc({operation:'translation_visual_ocr_page',project:project,page_id:decodeURI(doc.name)}).data;}while(!numeric.done);
-                            }catch(ve){if(cancelled)throw ve;addFailure({group_id:decodeURI(doc.name),stage:'visual_ocr',error:String(ve.message||ve)});}
+                            }catch(ve){if(cancelled||ve.workerUnresponsive)throw ve;addFailure({group_id:decodeURI(doc.name),stage:'visual_ocr',error:String(ve.message||ve)});}
                         }
                         scannedOrder.push(ix);
                     }catch(scanError){
-                        if(cancelled)throw scanError;
+                        if(cancelled||scanError.workerUnresponsive)throw scanError;
                         var failedName=decodeURI(sources[ix].name);
                         for(var sl=log.length-1;sl>=0;sl--)if(log[sl].page===failedName)log.splice(sl,1);
                         log.push({page:failedName,status:'failed',stage:'scan',error:String(scanError.message||scanError)});
@@ -765,12 +765,12 @@
                     MTA.write(pending,MJSON.stringify({run_id:pendingRun,project:project,pages:log,translation_failures:failed}));
                     var failedPages=0;for(var fp=0;fp<log.length;fp++)if(log[fp].status==='failed')failedPages++;
                     var pendingReport=null;
-                    if(pendingRun)try{pendingReport=rpc({operation:'translation_report',project:project,log:pending.fsName,title:cfg.title});}catch(_){}
+                    if(pendingRun)try{pendingReport=rpc({operation:'translation_report',project:project,log:pending.fsName,title:cfg.title});}catch(pe){if(pe.workerUnresponsive)throw pe;}
                     return {log:log,logFile:pending,failed:failed,scanFailures:scanFailures,summary:pendingReport?pendingReport.summary:{pages:log.length,ok:0,look:0,fix:failedPages},html:pendingReport?pendingReport.html:null,engine:chosen};
                 }
                 volumeProgress='';
                 // Autopilot: auto-exclude non-dialogue, retry transient errors with backoff,
-                // park groups that keep failing; one slice per request (the bridge waits 180 s).
+                // park groups that keep failing; the bridge watches worker liveness between slices.
                 // Cast extraction is not injected automatically: its first-page
                 // lookahead can disclose future information to earlier groups.
                 var run=null,report=null,autoExcluded=0;
@@ -791,7 +791,7 @@
                         if(!tick(cfg.label+'Rút gọn dòng quá dài'+(shortened?' ('+shortened+')':'…'),45))throw Error('Đã hủy');
                         sr=rpc({operation:'translation_auto_shorten',project:project,run_id:run.id,budget_seconds:140,page_ids:cfg.streamLimit?chunkPageIds:null,max_pages_per_call:cfg.streamLimit?1:null});shortened+=sr.shortened.length;
                     }while(!sr.done);
-                }catch(se){if(/hủy/.test(String(se.message)))throw se;addFailure({stage:'auto_shorten',error:String(se.message||se)});}
+                }catch(se){if(se.workerUnresponsive||/hủy/.test(String(se.message)))throw se;addFailure({stage:'auto_shorten',error:String(se.message||se)});}
                 var current=latestRun(loadProject());
                 for(var qr=0;qr<current.groups.length;qr++){
                     var qg=current.groups[qr],needsQuote=false,needsSlip=false;if(qg.status!=='completed')continue;
@@ -811,12 +811,12 @@
                         for(var retryQuote=0;retryQuote<2;retryQuote++){
                             try{var quoteResult=rpc({operation:'translation_repair_quote',project:project,run_id:run.id,group_id:qg.id}).data;
                                 if(!quoteResult.attempted || quoteResult.changed.length)break;
-                            }catch(qe){addFailure({group_id:qg.id,stage:'quote_retry',error:String(qe.message||qe)});break;}
+                            }catch(qe){if(qe.workerUnresponsive)throw qe;addFailure({group_id:qg.id,stage:'quote_retry',error:String(qe.message||qe)});break;}
                         }
                     }
                     if(needsSlip){if(!tick('Rà câu nói nhịu nhóm '+(qr+1)+'/'+current.groups.length,55))throw Error('Đã hủy');
                         try{rpc({operation:'translation_repair_slip',project:project,run_id:run.id,group_id:qg.id});}
-                        catch(sle){if(cancelled)throw sle;addFailure({group_id:qg.id,stage:'slip_retry',error:String(sle.message||sle)});}
+                        catch(sle){if(cancelled||sle.workerUnresponsive)throw sle;addFailure({group_id:qg.id,stage:'slip_retry',error:String(sle.message||sle)});}
                     }
                 }
                 current=latestRun(loadProject());var remaining=[];for(var rg=0;rg<current.groups.length;rg++)if(current.groups[rg].status!=='completed')remaining.push(current.groups[rg].id);
@@ -826,10 +826,10 @@
                     for(var oldLog=log.length-1;oldLog>=0;oldLog--)if(log[oldLog].page===decodeURI(sources[bi].name))log.splice(oldLog,1);
                     try{d=srcFolder?app.open(sources[bi]):sources[bi];owned=!!srcFolder;var found=null;for(var mi=0;mi<maps.length;mi++)if(maps[mi].page_id===decodeURI(d.name))found=maps[mi];
                         if(!found)throw Error('Thiếu mapping trang');var mf=new File(found.manifest),saved=MJSON.parse(MTA.read(mf));MTA.validateManifest(saved,d.width.as('px'),d.height.as('px'));
-                        var s={doc:d,folder:mf.parent,manifestPath:mf.fsName,data:saved,mapping:found.mapping,reviewLines:[],allowOmitted:true,offline:false,engine:chosen,draft:true,draftReview:found.review};
+                        var s={doc:d,folder:mf.parent,manifestPath:mf.fsName,data:saved,mapping:found.mapping,reviewLines:[],allowOmitted:true,offline:false,engine:chosen,draft:true,chapterOutput:!!cfg.streamLimit,draftReview:found.review};
                         build(s,false,true,false);var priority=[];for(var pr=0;pr<found.review.length;pr++)if(found.review[pr].priority==='high')priority.push(found.review[pr]);
                         log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,reading_order_review:layoutWarnings[found.page_id]||null,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
-                    }catch(be){log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
+                    }catch(be){if(be.workerUnresponsive)throw be;log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
                     finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);}
                     var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.write(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
                 }
@@ -838,7 +838,7 @@
                     var rep2=rpc({operation:'translation_report',project:project,log:logFile.fsName,title:cfg.title});
                     reportNote=' Báo cáo: '+rep2.summary.ok+' trang ổn, '+rep2.summary.look+' nên xem, '+rep2.summary.fix+' cần sửa.';
                     if(cfg.openReport!==false){try{(new File(rep2.html)).execute();}catch(_){}}
-                }catch(re){reportNote=' (Không tạo được báo cáo: '+String(re.message||re)+')';}
+                }catch(re){if(re.workerUnresponsive)throw re;reportNote=' (Không tạo được báo cáo: '+String(re.message||re)+')';}
                 cfg.note('Đã xuất bản nháp; kiểm tra báo cáo '+logFile.fsName+'. Sự cố: '+failed.length+'; OCR/dịch chưa được tự xác nhận.'+reportNote);
                 return {log:log,logFile:logFile,failed:failed,scanFailures:scanFailures,summary:rep2?rep2.summary:null,html:rep2?rep2.html:null,engine:chosen,autoExcluded:autoExcluded,aborted:report.aborted,abortReason:report.abort_reason};
             }finally{volumeProgress='';outputFolder=savedOutput;}
@@ -1487,6 +1487,7 @@
                     if(!partial)withoutWarnings++;
                     log.push({page: j+1, source: decodeURI(sources[j].name), ok: true, status:partial?'partial':'processed', psd: s.savedFiles.psd || null, pdf: s.savedFiles.pdf || null, output_color_mode:s.outputColorMode, output_color_profile:s.outputColorProfile, manifest:s.manifestPath, detector:s.data.detector || 'opencv', translation_page: batchCleanOnly.value ? null : pageKey, translation_lines:pageLines.length, unmapped_translation_indexes:s.omittedTranslations, manual_text_ids:s.manualText,layout_review:s.layoutReview||[], clean_result_schema:s.cleanResult.result_schema || null, clean_region_results:s.cleanResult.region_results || [], clean_review_ids:s.cleanResult.review_ids || [], clean_counts:s.cleanResult.counts || null, clean_applied:s.cleanResult.applied, clean_skipped:s.cleanResult.skipped, clean_blocked:s.cleanResult.blocked || {}, clean_skip_reason_codes:s.cleanResult.skip_reason_codes || {}, clean_trace:s.cleanResult.trace || null, clean_mask:s.cleanResult.mask || null, engine_id:s.cleanResult.engine_id || null, engine_version:s.cleanResult.version || null, scan_hardware:s.data.hardware || null, clean_hardware:s.cleanResult.hardware || null, experimental_clean:experimentalClean, clean_mask_pixels:s.cleanResult.mask_pixels || 0, clean_quality:s.cleanResult.quality || null});
                 } catch (e) {
+                    if (e.workerUnresponsive) throw e;
                     if (!cancelled && s && /không vừa/.test(String(e.message))) {
                         var failedPath=null;try{failedPath=files?sources[j].fsName:doc.fullName.fsName;}catch(_){}
                         var failedLines=parsed.pages[MTA.translationKey(parsed,sources[j].name,j)] || [];
@@ -1642,7 +1643,7 @@
         }
         function easyProfile(project,mode){
             var prior={},st,k;
-            try{st=rpc({operation:'translation_load',project:project});if(st.profiles.length)prior=st.profiles[st.profiles.length-1].values;}catch(_){}
+            try{st=rpc({operation:'translation_load',project:project});if(st.profiles.length)prior=st.profiles[st.profiles.length-1].values;}catch(profileError){if(profileError.workerUnresponsive)throw profileError;}
             var p={};for(k in prior)p[k]=prior[k];
             p.series_name=easyName.text;p.base_url=easyHost.text;p.model=easyModelName.text;
             p.group_size=7;p.max_tokens=24576;p.timeout=150;p.retries=1;p.json_mode=true;p.thinking='disabled';p.context_segments=2;

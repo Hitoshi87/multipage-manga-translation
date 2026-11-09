@@ -151,7 +151,7 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     assert(!refreshCtx.canRefreshPageLayout({runs:[{groups:[],blocked_ids:['s']}]},page,'opencv','magi'),'blocked source is immutable');
   }
   {
-    const files=['1.png','2.png'].map(name=>({name})),written={},calls=[];let pages=[],failNumeric=false;
+    const files=['1.png','2.png'].map(name=>({name})),written={},calls=[];let pages=[],failNumeric=false,staleWorker=false;
     function File(path){this.fsName=path;this.name=path.split('/').pop();this.parent={fsName:'/tmp'};this.exists=true;}
     files.forEach(f=>Object.setPrototypeOf(f,File.prototype));
     const volumeCtx={File,MJSON:JSON,cancelled:false,volumeProgress:'',inputFolder:null,outputFolder:{fsName:'/out'},
@@ -166,7 +166,10 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
         calls.push(req.operation);
         if(req.operation==='translation_load')return {pages,runs:[{id:'run1',groups:[],blocked_ids:[]}]};
         if(req.operation==='translation_autopilot')return {run_id:'run1',done:true,parked:[]};
-        if(req.operation==='translation_visual_ocr_page'){if(failNumeric)throw Error('vision unavailable');return {data:{done:true}};}
+        if(req.operation==='translation_visual_ocr_page'){
+          if(staleWorker){const error=Error('worker không có tín hiệu');error.workerUnresponsive=true;throw error;}
+          if(failNumeric)throw Error('vision unavailable');return {data:{done:true}};
+        }
         if(req.operation==='translation_auto_shorten')return {done:true,shortened:[]};
         if(req.operation==='translation_draft_mapping')return {data:{pages:[{page_id:'2.png',manifest:'/tmp/manifest.json',mapping:[],review:[],required_count:0}]}};
         if(req.operation==='translation_report')return {summary:{ok:1,look:0,fix:1,pages:2}};
@@ -187,6 +190,9 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     assert(calls.includes('translation_visual_ocr_page'));
     assert(degraded.failed.some(f=>f.stage==='visual_ocr'),'vision OCR failure is reported');
     assert(degraded.log.some(p=>p.status==='draft'),'vision OCR failure does not block ordinary translation and export');
+    calls.length=0;staleWorker=true;
+    assert.throws(()=>volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{vision_mode:'target_crop'},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false}),/worker không có tín hiệu/);
+    assert(!calls.includes('translation_autopilot'),'do not start a second worker while the timed-out one may still be alive');
   }
   {
     const all=Array.from({length:9},(_,i)=>({name:String(i+1)+'.png'}));

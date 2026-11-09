@@ -1,0 +1,7 @@
+# Worker liveness và timeout của Photoshop
+
+Log người dùng cung cấp cho lượt chạy bị dừng cho thấy request `translation_autopilot` có `budget_seconds: 140`, `max_groups: 1` và `max_slice_attempts: 1`. Response thực tế trả `ok: true` sau **198 giây**, với 17 nhóm hoàn tất và 2 nhóm chờ. Giới hạn 140 giây chỉ được kiểm tra giữa các lời gọi; nó không ngắt một request API đang thực hiện. Cầu nối JSX cũ hủy chờ sau tổng cộng 180 giây, nên có thể báo lỗi trước khi response thành công được ghi ra. `worker.log` của lượt đó rỗng; log không chứng minh thời gian đã dùng cho API hay xử lý cục bộ.
+
+Worker mới cập nhật file `heartbeat` trong khi dispatch. JSX chỉ áp ngưỡng 180 giây khi không có tín hiệu, thay vì áp lên tổng thời gian; nó vẫn nhận hủy từ người dùng. Heartbeat chứng minh tiến trình còn gửi tín hiệu, **không chứng minh tác vụ đang có tiến triển**. Nếu không có tín hiệu, code yêu cầu hủy, dừng chạy tiếp để tránh hai worker cùng ghi project, và chỉ đường dẫn log; cần xác nhận worker đã dừng trước khi chạy lại. Các trang đã xuất được giữ và dựa vào checkpoint hiện có khi tiếp tục.
+
+Kiểm tra: unit test giả lập response `translation_autopilot` sau 198 giây, worker sống lâu hơn 180 giây, mất tín hiệu và hủy; một bridge chạy thật với Python dùng đồng hồ tăng tốc tương đương 205 giây; scan MAGI thật trên trang 19 của mẫu Mayonaka hoàn thành sau 17,7 giây và ghi nhận 4 lần heartbeat. Các thời gian này không đại diện cho máy khác. Chưa kiểm thử cầu nối này trong Photoshop native trên macOS/Windows.
