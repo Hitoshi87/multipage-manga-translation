@@ -141,7 +141,7 @@ def validate_manifest(manifest):
     def integer(value):
         return type(value) is int and value >= 0
     width, height = manifest.get("width"), manifest.get("height")
-    if not integer(width) or not integer(height) or min(width, height) < 1 or width * height > 30_000_000:
+    if not integer(width) or not integer(height) or min(width, height) < 1:
         raise ValueError("Kích thước manifest không hợp lệ")
     analysis_size=manifest.get('analysis_size',[width,height])
     if not isinstance(analysis_size,list) or len(analysis_size)!=2 or not all(integer(v) and v>0 for v in analysis_size) or analysis_size[0]>width or analysis_size[1]>height:

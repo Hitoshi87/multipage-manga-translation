@@ -49,18 +49,21 @@ def _run_in_progress(state):
     return bool(state['runs']) and any(g['status'] == 'completed' for g in state['runs'][-1]['groups'])
 
 
-def auto_exclude(path, dry_run=False):
+def auto_exclude(path, dry_run=False, max_page_ordinal=None):
     """Mark non-dialogue segments as excluded. Returns what was (or would be) excluded."""
     state = service.load(path)
     found = []
+    protected={t['id'] for g in state['runs'][-1]['groups'] for t in g['targets']+g['context']} if state['runs'] and max_page_ordinal is not None else set()
     for page in state['pages']:
+        if max_page_ordinal is not None and page['ordinal'] > max_page_ordinal:
+            continue
         try:
             manifest = read_json(page['manifest'])
         except (OSError, ValueError):
             continue
         regions = {r['id']: r for r in manifest.get('regions', [])}
         for segment in page['segments']:
-            if segment.get('source_status') in HUMAN_STATES or segment.get('auto_exclude_overridden'):
+            if segment.get('source_status') in HUMAN_STATES or segment.get('auto_exclude_overridden') or segment['id'] in protected:
                 continue
             reason = classify_non_dialogue(segment, regions.get(segment['region_id']), manifest.get('width'), manifest.get('height'))
             if reason:
@@ -68,7 +71,7 @@ def auto_exclude(path, dry_run=False):
                                         'region_id': segment['region_id'], 'reason': reason,
                                         'text': (segment.get('jp') or '')[:40]}))
     # Changing the target set invalidates a run that already has translated groups.
-    applied = bool(found) and not dry_run and not _run_in_progress(state)
+    applied = bool(found) and not dry_run and (max_page_ordinal is not None or not _run_in_progress(state))
     if applied:
         for segment, info in found:
             segment['previous_source_status'] = segment.get('source_status', 'unreviewed')

@@ -89,6 +89,26 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(report['auto_excluded']['count'], 5)
         self.assertTrue(report['done'])
 
+    def test_streaming_triage_only_changes_new_pages_not_previous_groups(self):
+        from unittest.mock import patch
+        import json
+        page=self.dir/'p2';page.mkdir();(page/'original.png').write_bytes(b'page2')
+        write_json(page/'manifest.json',{'schema':1,'width':960,'height':1400,
+                   'regions':[region('B001','新連載'),region('B002','ありがとう')]})
+        service.index_page(self.project,page/'manifest.json','page2',2)
+        def provider(profile,prompt,payload):
+            return json.dumps({'translations':[{'id':x['id'],'vi':'Ok','flags':[]} for x in payload['segments']]}),{}
+        with patch.object(service,'call_provider',side_effect=provider):
+            first=autopilot.autopilot(self.project,max_page_ordinal=1)
+            before=service.load(self.project)
+            self.assertTrue(all(s['source_status']!='excluded' for s in before['pages'][1]['segments']))
+            prior=[s['source_status'] for s in before['pages'][0]['segments']]
+            second=autopilot.autopilot(self.project,max_page_ordinal=2)
+        after=service.load(self.project)
+        self.assertEqual(first['run_id'],second['run_id'])
+        self.assertEqual(prior,[s['source_status'] for s in after['pages'][0]['segments']])
+        self.assertEqual(after['pages'][1]['segments'][0]['source_status'],'excluded')
+
 
 if __name__ == '__main__':
     unittest.main()

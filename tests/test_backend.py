@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 from manga_ai.cli import dispatch, doctor, main, natural_key
 from manga_ai.engine import (Cancelled, analyse, bubble_candidates, check_cancel,
                              read_image, reading_order, render_clean, safe_rectangle)
-from manga_ai.io import checked_mapping, import_text, parse_translations, read_json, write_json
+from manga_ai.io import checked_mapping, import_text, parse_translations, read_json, write_json, validate_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "demo_project/pages/001_page1/original.png"
@@ -79,6 +79,16 @@ class TextTests(unittest.TestCase):
 
 
 class GeometryTests(unittest.TestCase):
+    def test_page_over_30_million_pixels_is_read_and_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'large.png'
+            Image.new('RGB',(6001,5000),'white').save(path)
+            image=read_image(path)
+            self.assertEqual(image.shape,(5000,6001,3))
+            self.assertEqual(tuple(image[0,0]),(255,255,255))
+            manifest={'schema':1,'width':6001,'height':5000,'regions':[]}
+            self.assertEqual(validate_manifest(manifest)['width'],6001)
+
     def test_rectangle_inside_ellipse(self):
         mask = np.zeros((150, 230), np.uint8)
         cv2.ellipse(mask, (115, 75), (108, 67), 0, 0, 360, 255, -1)

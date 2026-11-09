@@ -10,6 +10,23 @@ def segment(index, size=400):
 
 
 class GroupingTest(unittest.TestCase):
+    def test_cross_batch_quote_is_flagged_with_prior_source_as_context(self):
+        a={**segment(1,2),'page_ordinal':1,'page_id':'a','jp':'みにゃ…皆も聞いている通り'}
+        b={**segment(2,2),'page_ordinal':2,'page_id':'b','jp':'冒頭の「みにゃ」とはなんですか？'}
+        group=build_groups([b],version=digest,system='rules',group_size=7,context_segments=2,
+                           max_input_chars=24000,prior_context=[a])[0]
+        self.assertEqual([s['id'] for s in group['context']],['1'])
+        self.assertEqual(group['unresolved_quote_links'],[{'source_id':'1','quote_id':'2'}])
+
+    def test_older_quoted_source_is_retrieved_beyond_normal_context_window(self):
+        prior=[{**segment(i,2),'page_ordinal':1,'page_id':'a','jp':('みにゃ…皆も聞いている通り' if i==0 else '普通の話')}
+               for i in range(8)]
+        current={**segment(9,2),'page_ordinal':2,'page_id':'b','jp':'冒頭の「みにゃ」とはなんですか？'}
+        group=build_groups([current],version=digest,system='rules',group_size=7,context_segments=2,
+                           max_input_chars=24000,prior_context=prior)[0]
+        self.assertEqual([s['id'] for s in group['context']],['0','6','7'])
+        self.assertEqual(group['unresolved_quote_links'],[{'source_id':'0','quote_id':'9'}])
+
     def test_alternative_ocr_reaches_model_as_unverified_evidence(self):
         s={**segment(1,10),'jp':'正一お前','raw_ocr':'まさ か ず 正一 お前',
            'ocr_evidence':{'origin':'tesseract'}}

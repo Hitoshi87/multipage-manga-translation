@@ -18,6 +18,21 @@ class WorkflowTest(unittest.TestCase):
             service.index_page(self.project,page/'manifest.json','page'+str(n),n)
     def provider(self, profile, prompt, payload):
         return json.dumps({'translations':[{'id':x['id'],'vi':'Xin chào','flags':[]} for x in payload['segments']]}), {'usage':{'total_tokens':10},'latency_ms':1,'model_returned':'mock'}
+
+    def test_unverified_numerals_are_queued_for_review(self):
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        with patch.object(service,'call_provider',side_effect=self.provider):
+            row=service.run_group(self.project,run['id'],group['id'])['data']['results'][0]
+        self.assertIn('numeric_source_unverified',row['qa_warnings'])
+        self.assertIn('needs_review',row['flags'])
+
+    def test_human_corrected_numerals_do_not_get_unverified_warning(self):
+        seg=service.load(self.project)['pages'][0]['segments'][0]
+        service.edit_source(self.project,seg['id'],'１００円')
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        with patch.object(service,'call_provider',side_effect=self.provider):
+            row=service.run_group(self.project,run['id'],group['id'])['data']['results'][0]
+        self.assertNotIn('numeric_source_unverified',row.get('qa_warnings',[]))
     def test_resume_approval_and_invalidation(self):
         run=service.prepare(self.project)['data']; g1,g2=run['groups']
         with patch.object(service,'call_provider',side_effect=self.provider) as provider:

@@ -20,6 +20,17 @@ ctx.engineChoice.selection.index=1;ctx.engineChoice.onChange();
 assert.strictEqual(ctx.modelBatch.value,false);
 for(const name of ['maskChoice','useLama','modelBatch','protectFaces','testModel'])assert.strictEqual(ctx[name].enabled,false,name);
 assert(ctx.previewEngine.enabled && ctx.clean.enabled);
+{
+  let ready=true;
+  const choice={removeAll(){},add(){},selection:null};
+  const startup={rpc:()=>({engines:[{id:'baseline',label:'Baseline',version:'1',ready:true}],default:'baseline',ui_features:{magi:{ready},scan_ai:{ready:true}}}),
+    featureReady(name){return !!(startup.uiFeatures[name]&&startup.uiFeatures[name].ready);},
+    engines:[],uiFeatures:{},aiDetector:{value:true},magiOrder:{value:false},engineChoice:choice,status:{}};
+  vm.createContext(startup);
+  vm.runInContext(source.slice(source.indexOf('        function loadEngines()'),source.indexOf('        engineChoice.onChange=')),startup);
+  startup.loadEngines();assert.strictEqual(startup.magiOrder.value,true,'installed MAGI is selected at startup');
+  ready=false;startup.loadEngines();assert.strictEqual(startup.magiOrder.value,false,'missing MAGI falls back to OpenCV');
+}
 ctx.run(()=>{});
 for(const name of ['modelBatch','protectFaces','testModel'])assert.strictEqual(ctx[name].enabled,false,'run finally re-enabled '+name);
 ctx.batchCleanOnly.value=true;ctx.batchCleanOnly.onClick();
@@ -122,12 +133,87 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
       easyProfile:()=>({}),easyName:{text:'test'},easySay(){},easyReport:{},alert(){},
       File:function(p){this.fsName=p;},
       rpc(){throw Error('direct run must not call preflight RPC');},
-      runVolume(cfg){calls.push('volume');assert.strictEqual(cfg.folder.fsName,'/input');return {summary:{pages:1,ok:1,look:0,fix:0}};}
+      runStreamingVolume(cfg){calls.push('volume');assert.strictEqual(cfg.folder.fsName,'/input');return {summary:{pages:1,ok:1,look:0,fix:0}};}
     };
     vm.createContext(directCtx);
     vm.runInContext(source.slice(source.indexOf('        function easyRunBody('),source.indexOf('        easyReview.onClick=')),directCtx);
     directCtx.easyRunBody('direct');
     assert.deepStrictEqual(calls,['save-api','volume'],'direct action runs the volume once without a trial');
+  }
+  {
+    const refreshCtx={};vm.createContext(refreshCtx);
+    vm.runInContext(source.slice(source.indexOf('        function canRefreshPageLayout('),source.indexOf('        function runVolume(')),refreshCtx);
+    const page={page_id:'p',segments:[{id:'s',source_status:'unreviewed'}]};
+    assert(refreshCtx.canRefreshPageLayout({runs:[]},page,'opencv','magi'),'untranslated scan may be refreshed');
+    assert(!refreshCtx.canRefreshPageLayout({runs:[]},page,'magi','magi'));
+    assert(!refreshCtx.canRefreshPageLayout({runs:[{groups:[{targets:[{id:'s'}],context:[]}]}]},page,'opencv','magi'),'referenced scan is immutable');
+    assert(!refreshCtx.canRefreshPageLayout({runs:[]},{page_id:'p',segments:[{id:'s',source_status:'user_corrected'}]},'opencv','magi'),'manual OCR is never discarded');
+    assert(!refreshCtx.canRefreshPageLayout({runs:[{groups:[],blocked_ids:['s']}]},page,'opencv','magi'),'blocked source is immutable');
+  }
+  {
+    const files=['1.png','2.png'].map(name=>({name})),written={},calls=[];let pages=[],failNumeric=false;
+    function File(path){this.fsName=path;this.name=path.split('/').pop();this.parent={fsName:'/tmp'};this.exists=true;}
+    files.forEach(f=>Object.setPrototypeOf(f,File.prototype));
+    const volumeCtx={File,MJSON:JSON,cancelled:false,volumeProgress:'',inputFolder:null,outputFolder:{fsName:'/out'},
+      lang:{selection:{text:'jpn_vert'}},savePsd:{value:false},savePdf:{value:true},docs:[],root:{fsName:'/tmp'},
+      magiOrder:{value:true},koharuOrder:{value:false},
+      selectedEngine:()=>({id:'baseline'}),tick:()=>true,
+      app:{open:f=>({name:f.name,width:{as:()=>10},height:{as:()=>10},close(){}})},SaveOptions:{DONOTSAVECHANGES:0},
+      MTA:{sourceNameAllowed:()=>true,mkdir:()=>({fsName:'/tmp'}),unique:()=>1,snapshot:()=>({fsName:'/tmp/snapshot.png'}),read:()=>JSON.stringify({regions:[],layout_model:'opencv'}),write:(f,s)=>{written[f.fsName]=JSON.parse(s);},validateManifest(){}},
+      detect(doc){if(doc.name==='1.png')throw Error('Không đọc được trang');return {manifestPath:'/tmp/manifest.json'};},
+      build(s){s.cleanResult={skipped:[],applied:[]};s.savedFiles={pdf:'/out/2.pdf'};},
+      rpc(req){
+        calls.push(req.operation);
+        if(req.operation==='translation_load')return {pages,runs:[{id:'run1',groups:[],blocked_ids:[]}]};
+        if(req.operation==='translation_autopilot')return {run_id:'run1',done:true,parked:[]};
+        if(req.operation==='translation_visual_ocr_page'){if(failNumeric)throw Error('vision unavailable');return {data:{done:true}};}
+        if(req.operation==='translation_auto_shorten')return {done:true,shortened:[]};
+        if(req.operation==='translation_draft_mapping')return {data:{pages:[{page_id:'2.png',manifest:'/tmp/manifest.json',mapping:[],review:[],required_count:0}]}};
+        if(req.operation==='translation_report')return {summary:{ok:1,look:0,fix:1,pages:2}};
+        return {};
+      }};
+    vm.createContext(volumeCtx);
+    vm.runInContext(source.slice(source.indexOf('        function runVolume('),source.indexOf('        // Bounded, chronological batches')),volumeCtx);
+    const result=volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
+    assert.deepStrictEqual(Array.from(result.log,x=>x.status),['failed','draft'],'scan failure does not prevent another page from exporting');
+    assert.match(result.log[0].error,/Không đọc được trang/);
+    assert.strictEqual(written['/out/draft_run1.json'].pages.length,2,'failure and exported page are checkpointed');
+    pages=[{page_id:'2.png',ordinal:2,manifest:'/tmp/old.json',segments:[{id:'s',source_status:'unreviewed'}]}];calls.length=0;
+    vm.runInContext(source.slice(source.indexOf('        function canRefreshPageLayout('),source.indexOf('        function runVolume(')),volumeCtx);
+    volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
+    assert(calls.includes('translation_verify_page')&&calls.includes('translation_index'),'unreferenced old OpenCV scan is refreshed to MAGI');
+    pages=[];calls.length=0;failNumeric=true;
+    const degraded=volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{vision_mode:'target_crop'},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
+    assert(calls.includes('translation_visual_ocr_page'));
+    assert(degraded.failed.some(f=>f.stage==='visual_ocr'),'vision OCR failure is reported');
+    assert(degraded.log.some(p=>p.status==='draft'),'vision OCR failure does not block ordinary translation and export');
+  }
+  {
+    const all=Array.from({length:9},(_,i)=>({name:String(i+1)+'.png'}));
+    function MockFile(path){this.fsName=path;this.exists=true;}
+    all.forEach(f=>Object.setPrototypeOf(f,MockFile.prototype));
+    const batches=[],cfg={folder:{getFiles:()=>all},output:{fsName:'/out'},project:'/out/p.json',profile:{},title:'test',note(){},engine:{id:'baseline'}};
+    const streamCtx={File:MockFile,MTA:{sourceNameAllowed:()=>true},latestDraftLog:()=>null,
+      rpc(req){if(req.operation==='translation_load')return {runs:[],profiles:[{revision:'a'}]};return {};},
+      runVolume(part){
+        batches.push({indices:Array.from(part.indices),limit:part.streamLimit});
+        part.indices.forEach(i=>part.sharedLog.push({page:all[i].name,status:'draft',mapped:1,required:1,files:{pdf:'/out/'+all[i].name+'.pdf'}}));
+        return {log:part.sharedLog,summary:{pages:part.sharedLog.length},html:null};
+      }};
+    vm.createContext(streamCtx);
+    vm.runInContext(source.slice(source.indexOf('        function runStreamingVolume('),source.indexOf('        // ---------- Rà soát nhanh')),streamCtx);
+    const result=streamCtx.runStreamingVolume(cfg);
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[0,1,2,3],[4,5,6,7],[8]]);
+    assert.deepStrictEqual(batches.map(b=>b.limit),[4,8,9]);
+    assert.strictEqual(result.log.length,9,'all batch logs are accumulated');
+    const saved={run_id:'run1',pages:[0,1,2].map(i=>({page:all[i].name,status:'draft',mapped:1,required:1,files:{pdf:'/out/'+all[i].name+'.pdf'}}))};
+    streamCtx.latestDraftLog=()=>({fsName:'/out/draft_run1.json'});
+    streamCtx.MTA.read=()=>JSON.stringify(saved);streamCtx.MJSON=JSON;
+    streamCtx.rpc=req=>req.operation==='translation_load'?{runs:[{id:'run1',streaming:true,profile_revision:'a'}],profiles:[{revision:'a'}]}:{};
+    batches.length=0;
+    const resumed=streamCtx.runStreamingVolume(cfg);
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[3],[4,5,6,7],[8]],'resume skips existing exported pages');
+    assert.strictEqual(resumed.log.length,9);
   }
   assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
   // Export colour is an explicit choice (keep / RGB / CMYK), never a hard-set CMYK.

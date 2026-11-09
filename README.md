@@ -150,6 +150,8 @@ Báo cáo `ready: true` nghĩa là đủ package, Tesseract và ngôn ngữ OCR.
 4. Bấm **Chỉ thử 3 trang** trước. Máy làm thử 3 trang rải trong tập, rồi báo có nên chạy cả tập không. Nếu ổn, bấm **Bắt đầu** để chạy cả tập; có thể làm việc khác, Photoshop sẽ báo khi xong.
 5. Kết quả nằm trong `_MangaTypesetter/` cạnh thư mục truyện: mỗi trang một Adobe Photoshop PDF giữ layer (nhóm `CLEAN — từng bubble` và `TYPESET — Tiếng Việt`), cùng báo cáo `BAO_CAO.html` liệt kê chỗ cần xem. Bấm **Rà soát nhanh** để sửa từng bong bóng ngay trong Photoshop.
 
+Chế độ **Chất lượng** gửi ảnh vùng thoại tới API đã chọn. Với vùng chưa xác nhận chứa số, cụm chữ Hán dài có thể chứa tên, hoặc chữ hiệu ứng nghi bị nhập vào thoại, hệ thống gửi thêm ảnh cận theo nhóm tối đa 8 vùng/trang để đề xuất cách đọc và furigana độc lập; các đề xuất không tự xác nhận OCR và số vẫn được đưa vào báo cáo cần kiểm tra. Chế độ này tốn thêm thời gian và chi phí API. Nếu MAGI đã cài, script ưu tiên MAGI để sắp thứ tự đọc; kiểm tra điều khoản sử dụng của model trong [models/NOTICE.md](models/NOTICE.md).
+
 Khi báo lỗi, gửi kèm `BAO_CAO.html`, thư mục `_MangaTypesetter/chay_thu_*` và file `work/jobs/*/worker.log` mới nhất. Đây là bản thử: giao diện Photoshop mới được kiểm bằng mô phỏng, chưa chạy thật trên nhiều máy.
 
 1. **Mở ảnh gốc** (hoặc chọn folder cả chương), rồi File → Scripts → Browse → `Photoshop_Typeset.jsx`.

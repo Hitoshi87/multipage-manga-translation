@@ -237,7 +237,10 @@
         function loadEngines() {
             try {
                 var data=rpc({operation:'list_engines'});if(!data.engines || !data.engines.length)throw Error('Danh sách engine rỗng');
-                engines=data.engines;uiFeatures=data.ui_features || {};if(!featureReady('scan_ai'))aiDetector.value=false;engineChoice.removeAll();var defaultIndex=0;
+                engines=data.engines;uiFeatures=data.ui_features || {};if(!featureReady('scan_ai'))aiDetector.value=false;
+                // MAGI is optional, but when installed its panel reading order
+                // is more reliable on multi-column manga than spatial sorting.
+                magiOrder.value=featureReady('magi');engineChoice.removeAll();var defaultIndex=0;
                 for(var n=0;n<engines.length;n++){var item=engines[n];engineChoice.add('item',item.label+' — '+item.version+(item.ready?'':' [thiếu model]'));if(item.id===data.default)defaultIndex=n;}
                 engineChoice.selection=defaultIndex;
             } catch(e) { status.text='Không tải được danh sách engine; dùng baseline offline khi có manifest.'; }
@@ -280,7 +283,6 @@
         function detect(doc) {
             var chosen=selectedEngine();
             if (!lang.selection) throw Error("Chọn OCR đúng chữ gốc: Nhật dọc = jpn_vert; Nhật ngang = jpn; Anh = eng.");
-            if (doc.width.as('px') * doc.height.as('px') > 30000000) throw Error('Trang vượt 30 triệu pixel; hãy chia trang dài.');
             var folder = MTA.mkdir(root.fsName + '/work/pages/' + MTA.unique());
             tick('Xuất ảnh tổng hợp: ' + doc.name, 10);
             var input = MTA.snapshot(doc, folder);
@@ -690,12 +692,32 @@
         }
         // Shared volume pipeline: scan -> OCR -> translate -> clean -> typeset for a list of pages.
         // cfg: project, profile, title, note(text), label, [engine], [folder], [indices], [output].
+        function canRefreshPageLayout(data,page,oldLayout,newLayout){
+            if(oldLayout===newLayout)return false;
+            var ids={},i,j,k;
+            for(i=0;i<page.segments.length;i++){
+                var s=page.segments[i];ids[s.id]=true;
+                if(s.source_status==='verified'||s.source_status==='user_corrected'||s.ruby&&s.ruby.length||
+                   s.source_status==='excluded'&&!(s.exclusion&&s.exclusion.auto))return false;
+            }
+            for(i=0;i<data.runs.length;i++){
+                var run=data.runs[i],blocked=run.blocked_ids||[];
+                for(j=0;j<blocked.length;j++)if(ids[blocked[j]])return false;
+                for(j=0;j<run.groups.length;j++){
+                    var refs=(run.groups[j].targets||[]).concat(run.groups[j].context||[]);
+                    for(k=0;k<refs.length;k++)if(ids[refs[k].id]||refs[k].page_id===page.page_id)return false;
+                }
+            }
+            return true;
+        }
+
         function runVolume(cfg){
             var project=cfg.project;cfg.label=cfg.label||'';
             function loadProject(){return rpc({operation:'translation_load',project:project});}
             function latestRun(data){if(!data.runs.length)throw Error('Chưa có lượt dịch');return data.runs[data.runs.length-1];}
             function fileMb(path){try{var f=new File(path);return f.exists?Math.round(f.length/104857.6)/10:null;}catch(_){return null;}}
-            var srcFolder=cfg.folder||inputFolder,savedOutput=outputFolder,rep2=null,logFile=null,log=[],failed=[];
+            var srcFolder=cfg.folder||inputFolder,savedOutput=outputFolder,rep2=null,logFile=null,log=cfg.sharedLog||[],failed=cfg.sharedFailures||[];
+            function addFailure(item){for(var fi=0;fi<failed.length;fi++)if(failed[fi].group_id===item.group_id && failed[fi].stage===item.stage){failed[fi]=item;return;}failed.push(item);}
             if(cfg.output)outputFolder=cfg.output;
             try{
                 if(!lang.selection || !/^jpn/.test(lang.selection.text))throw Error('Hãy chọn OCR Nhật trước khi chạy volume.');
@@ -706,53 +728,107 @@
                 if(srcFolder)sources.sort(function(a,b){var aa=decodeURI(a.name).match(/\d+|\D+/g),bb=decodeURI(b.name).match(/\d+|\D+/g);for(var z=0;z<Math.min(aa.length,bb.length);z++){var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase(),bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();if(av<bv)return -1;if(av>bv)return 1;}return aa.length-bb.length;});
                 var names={};for(var ck=0;ck<sources.length;ck++){var nm=decodeURI(sources[ck].name);if(names[nm])throw Error('Tên trang bị trùng: '+nm);names[nm]=true;}
                 var order=[];if(cfg.indices){for(var oi=0;oi<cfg.indices.length;oi++)if(cfg.indices[oi]>=0&&cfg.indices[oi]<sources.length)order.push(cfg.indices[oi]);}else{for(var oj=0;oj<sources.length;oj++)order.push(oj);}
+                var chunkPageIds=[];for(var cp=0;cp<order.length;cp++)chunkPageIds.push(decodeURI(sources[order[cp]].name));
+                var scannedOrder=[],scanFailures=[],layoutWarnings={};
                 for(var ox=0;ox<order.length;ox++){
                     var ix=order[ox];volumeProgress=cfg.label+'Trang '+(ox+1)+'/'+order.length;if(!tick('Nhận diện và đọc chữ',5+10*ox/order.length))throw Error('Đã hủy');var doc=null,own=false;
                     try{doc=srcFolder?app.open(sources[ix]):sources[ix];own=!!srcFolder;var existing=null,data=loadProject();
                         for(var pi=0;pi<data.pages.length;pi++)if(data.pages[pi].page_id===decodeURI(doc.name))existing=data.pages[pi];
-                        if(existing){if(existing.ordinal!==ix+1)throw Error('Thứ tự trang đã đổi; hãy tạo project mới hoặc index lại.');var tmp=MTA.mkdir(root.fsName+'/work/pages/'+MTA.unique());var snap=MTA.snapshot(doc,tmp);rpc({operation:'translation_verify_page',manifest:existing.manifest,snapshot:snap.fsName});}
+                        if(existing){if(existing.ordinal!==ix+1)throw Error('Thứ tự trang đã đổi; hãy tạo project mới hoặc index lại.');var tmp=MTA.mkdir(root.fsName+'/work/pages/'+MTA.unique());var snap=MTA.snapshot(doc,tmp);rpc({operation:'translation_verify_page',manifest:existing.manifest,snapshot:snap.fsName});
+                            var oldManifest=MJSON.parse(MTA.read(new File(existing.manifest))),wantedLayout=magiOrder.value?'magi':(koharuOrder.value?'koharu':'opencv');
+                            var oldLayout=oldManifest.layout_model||'opencv';
+                            if(canRefreshPageLayout(data,existing,oldLayout,wantedLayout)){
+                                var rescanned=detect(doc);rpc({operation:'translation_index',project:project,manifest:rescanned.manifestPath,page_id:decodeURI(doc.name),ordinal:ix+1});
+                            }else if(oldLayout!==wantedLayout)layoutWarnings[decodeURI(doc.name)]=oldLayout;
+                        }
                         else{var scanned=detect(doc);rpc({operation:'translation_index',project:project,manifest:scanned.manifestPath,page_id:decodeURI(doc.name),ordinal:ix+1});}
                         rpc({operation:'translation_auto_ocr_page',project:project,page_id:decodeURI(doc.name)});
+                        if(cfg.profile.vision_mode && cfg.profile.vision_mode!=='off'){
+                            try{
+                                var numeric;
+                                do{numeric=rpc({operation:'translation_visual_ocr_page',project:project,page_id:decodeURI(doc.name)}).data;}while(!numeric.done);
+                            }catch(ve){if(cancelled)throw ve;addFailure({group_id:decodeURI(doc.name),stage:'visual_ocr',error:String(ve.message||ve)});}
+                        }
+                        scannedOrder.push(ix);
+                    }catch(scanError){
+                        if(cancelled)throw scanError;
+                        var failedName=decodeURI(sources[ix].name);
+                        for(var sl=log.length-1;sl>=0;sl--)if(log[sl].page===failedName)log.splice(sl,1);
+                        log.push({page:failedName,status:'failed',stage:'scan',error:String(scanError.message||scanError)});
+                        scanFailures.push(failedName);
                     }finally{if(own&&doc)doc.close(SaveOptions.DONOTSAVECHANGES);}
+                }
+                order=scannedOrder;
+                if(!order.length){
+                    var pendingState=loadProject(),pendingRun=pendingState.runs.length?pendingState.runs[pendingState.runs.length-1].id:null;
+                    var pending=new File(outputFolder.fsName+'/draft_'+(pendingRun||'scan_pending')+'.json');
+                    MTA.write(pending,MJSON.stringify({run_id:pendingRun,project:project,pages:log,translation_failures:failed}));
+                    var failedPages=0;for(var fp=0;fp<log.length;fp++)if(log[fp].status==='failed')failedPages++;
+                    var pendingReport=null;
+                    if(pendingRun)try{pendingReport=rpc({operation:'translation_report',project:project,log:pending.fsName,title:cfg.title});}catch(_){}
+                    return {log:log,logFile:pending,failed:failed,scanFailures:scanFailures,summary:pendingReport?pendingReport.summary:{pages:log.length,ok:0,look:0,fix:failedPages},html:pendingReport?pendingReport.html:null,engine:chosen};
                 }
                 volumeProgress='';
                 // Autopilot: auto-exclude non-dialogue, retry transient errors with backoff,
                 // park groups that keep failing; one slice per request (the bridge waits 180 s).
                 // Cast extraction is not injected automatically: its first-page
                 // lookahead can disclose future information to earlier groups.
-                var run=null,failed=[],report=null,autoExcluded=0;
+                var run=null,report=null,autoExcluded=0;
                 do{
                     if(!tick(cfg.label+'Dịch tự động'+(report?': '+report.completed+'/'+report.total+' nhóm':'…'),30))throw Error('Đã hủy');
                     var autoRequest={operation:'translation_autopilot',project:project,budget_seconds:140};
+                    if(cfg.streamLimit){autoRequest.max_page_ordinal=cfg.streamLimit;autoRequest.max_groups=1;autoRequest.max_slice_attempts=1;}
                     if(run)autoRequest.run_id=run.id;
                     report=rpc(autoRequest);run={id:report.run_id};
                     if(report.auto_excluded)autoExcluded=report.auto_excluded.count;
                 }while(!report.done && !report.aborted);
-                for(var pk=0;pk<report.parked.length;pk++)failed.push({group_id:report.parked[pk].group_id,error:report.parked[pk].error});
-                if(report.aborted)failed.push({stage:'autopilot',error:report.abort_reason});
+                for(var pk=0;pk<report.parked.length;pk++)addFailure({group_id:report.parked[pk].group_id,error:report.parked[pk].error});
+                if(report.aborted)addFailure({stage:'autopilot',error:report.abort_reason});
                 // Tighten only the lines that would be lettered cramped (non-fatal if it cannot run).
                 try{
                     var shortened=0,sr=null;
                     do{
                         if(!tick(cfg.label+'Rút gọn dòng quá dài'+(shortened?' ('+shortened+')':'…'),45))throw Error('Đã hủy');
-                        sr=rpc({operation:'translation_auto_shorten',project:project,run_id:run.id,budget_seconds:140});shortened+=sr.shortened.length;
+                        sr=rpc({operation:'translation_auto_shorten',project:project,run_id:run.id,budget_seconds:140,page_ids:cfg.streamLimit?chunkPageIds:null,max_pages_per_call:cfg.streamLimit?1:null});shortened+=sr.shortened.length;
                     }while(!sr.done);
-                }catch(se){if(/hủy/.test(String(se.message)))throw se;failed.push({stage:'auto_shorten',error:String(se.message||se)});}
+                }catch(se){if(/hủy/.test(String(se.message)))throw se;addFailure({stage:'auto_shorten',error:String(se.message||se)});}
                 var current=latestRun(loadProject());
                 for(var qr=0;qr<current.groups.length;qr++){
-                    var qg=current.groups[qr],needsQuote=false;if(qg.status!=='completed')continue;
+                    var qg=current.groups[qr],needsQuote=false,needsSlip=false;if(qg.status!=='completed')continue;
+                    if(cfg.streamLimit){var inChunk=false;for(var tq=0;tq<qg.targets.length;tq++)for(var tp=0;tp<chunkPageIds.length;tp++)if(qg.targets[tq].page_id===chunkPageIds[tp])inChunk=true;if(!inChunk)continue;}
+                    // Do not rewrite any group whose output already exists: a
+                    // resumed partial batch must not desynchronise earlier PDFs.
+                    var exported=false;for(var et=0;et<qg.targets.length;et++)for(var el=0;el<log.length;el++)if(log[el].page===qg.targets[et].page_id && log[el].status==='draft' && log[el].files && (log[el].files.pdf||log[el].files.psd))exported=true;
+                    if(exported)continue;
                     for(var qv=0;qv<qg.results.length;qv++){var qt=qg.results[qv].semantic_translation.toLowerCase();if(/(?:anh|em|chị|cô|chú|bác|ông|bà)\s+yêu|yêu\s+(?:anh|em|chị|cô|chú|bác|ông|bà)/.test(qt))needsQuote=true;}
-                    if(needsQuote){if(!tick('Rà xưng hô nhóm '+(qr+1)+'/'+current.groups.length,55))throw Error('Đã hủy');try{rpc({operation:'translation_repair_quote',project:project,run_id:run.id,group_id:qg.id});}catch(qe){failed.push({group_id:qg.id,stage:'quote_retry',error:String(qe.message||qe)});}}
+                    if(cfg.profile.vision_mode && cfg.profile.vision_mode!=='off')for(var st=0;st<qg.targets.length;st++){
+                        if(!/[\u3040-\u30ff]{2,}(?:…|[.\uff0e]{2,})/.test(qg.targets[st].jp.replace(/「[^」]*」/g,'')))continue;
+                        for(var sv=0;sv<qg.results.length;sv++)if(qg.results[sv].id===qg.targets[st].id){
+                            var sf=qg.results[sv].flags||[];for(var sx=0;sx<sf.length;sx++)if(sf[sx]==='needs_review'||sf[sx]==='ocr_suspect')needsSlip=true;
+                        }
+                    }
+                    if(needsQuote){if(!tick('Rà xưng hô nhóm '+(qr+1)+'/'+current.groups.length,55))throw Error('Đã hủy');
+                        for(var retryQuote=0;retryQuote<2;retryQuote++){
+                            try{var quoteResult=rpc({operation:'translation_repair_quote',project:project,run_id:run.id,group_id:qg.id}).data;
+                                if(!quoteResult.attempted || quoteResult.changed.length)break;
+                            }catch(qe){addFailure({group_id:qg.id,stage:'quote_retry',error:String(qe.message||qe)});break;}
+                        }
+                    }
+                    if(needsSlip){if(!tick('Rà câu nói nhịu nhóm '+(qr+1)+'/'+current.groups.length,55))throw Error('Đã hủy');
+                        try{rpc({operation:'translation_repair_slip',project:project,run_id:run.id,group_id:qg.id});}
+                        catch(sle){if(cancelled)throw sle;addFailure({group_id:qg.id,stage:'slip_retry',error:String(sle.message||sle)});}
+                    }
                 }
                 current=latestRun(loadProject());var remaining=[];for(var rg=0;rg<current.groups.length;rg++)if(current.groups[rg].status!=='completed')remaining.push(current.groups[rg].id);
-                var maps=rpc({operation:'translation_draft_mapping',project:project,run_id:run.id}).data.pages,log=[];
+                var maps=rpc({operation:'translation_draft_mapping',project:project,run_id:run.id,page_ids:cfg.streamLimit?chunkPageIds:null}).data.pages;
                 for(var bx=0;bx<order.length;bx++){
                     var bi=order[bx];if(!tick(cfg.label+'Xoá chữ gốc và chèn chữ trang '+(bx+1)+'/'+order.length,65+30*bx/order.length))throw Error('Đã hủy');var d=null,owned=false;
+                    for(var oldLog=log.length-1;oldLog>=0;oldLog--)if(log[oldLog].page===decodeURI(sources[bi].name))log.splice(oldLog,1);
                     try{d=srcFolder?app.open(sources[bi]):sources[bi];owned=!!srcFolder;var found=null;for(var mi=0;mi<maps.length;mi++)if(maps[mi].page_id===decodeURI(d.name))found=maps[mi];
                         if(!found)throw Error('Thiếu mapping trang');var mf=new File(found.manifest),saved=MJSON.parse(MTA.read(mf));MTA.validateManifest(saved,d.width.as('px'),d.height.as('px'));
                         var s={doc:d,folder:mf.parent,manifestPath:mf.fsName,data:saved,mapping:found.mapping,reviewLines:[],allowOmitted:true,offline:false,engine:chosen,draft:true,draftReview:found.review};
                         build(s,false,true,false);var priority=[];for(var pr=0;pr<found.review.length;pr++)if(found.review[pr].priority==='high')priority.push(found.review[pr]);
-                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
+                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,reading_order_review:layoutWarnings[found.page_id]||null,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
                     }catch(be){log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
                     finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);}
                     var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.write(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
@@ -763,9 +839,52 @@
                     reportNote=' Báo cáo: '+rep2.summary.ok+' trang ổn, '+rep2.summary.look+' nên xem, '+rep2.summary.fix+' cần sửa.';
                     if(cfg.openReport!==false){try{(new File(rep2.html)).execute();}catch(_){}}
                 }catch(re){reportNote=' (Không tạo được báo cáo: '+String(re.message||re)+')';}
-                cfg.note('Đã xuất bản nháp; kiểm tra báo cáo '+logFile.fsName+'. Nhóm lỗi: '+failed.length+'; OCR/dịch chưa được tự xác nhận.'+reportNote);
-                return {log:log,logFile:logFile,failed:failed,summary:rep2?rep2.summary:null,html:rep2?rep2.html:null,engine:chosen,autoExcluded:autoExcluded};
+                cfg.note('Đã xuất bản nháp; kiểm tra báo cáo '+logFile.fsName+'. Sự cố: '+failed.length+'; OCR/dịch chưa được tự xác nhận.'+reportNote);
+                return {log:log,logFile:logFile,failed:failed,scanFailures:scanFailures,summary:rep2?rep2.summary:null,html:rep2?rep2.html:null,engine:chosen,autoExcluded:autoExcluded,aborted:report.aborted,abortReason:report.abort_reason};
             }finally{volumeProgress='';outputFolder=savedOutput;}
+        }
+
+        // Bounded, chronological batches; the project run grows without
+        // retranslating previous groups, and each completed page is exported.
+        function runStreamingVolume(cfg){
+            var files=cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);});
+            files.sort(function(a,b){var aa=decodeURI(a.name).match(/\d+|\D+/g),bb=decodeURI(b.name).match(/\d+|\D+/g);for(var z=0;z<Math.min(aa.length,bb.length);z++){var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase(),bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();if(av<bv)return -1;if(av>bv)return 1;}return aa.length-bb.length;});
+            if(!files.length)throw Error('Không có trang để xử lý.');
+            rpc({operation:'translation_profile',project:cfg.project,profile:cfg.profile});
+            var state=rpc({operation:'translation_load',project:cfg.project}),previous=state.runs.length?state.runs[state.runs.length-1]:null;
+            if(previous && previous.streaming && state.profiles[state.profiles.length-1].revision!==previous.profile_revision)throw Error('Cấu hình dịch đã thay đổi; hãy chọn thư mục lưu mới để bắt đầu lượt mới.');
+            var shared=[],sharedFailures=[],last=null,old=latestDraftLog(cfg.output,cfg.project);
+            if(old && previous && previous.streaming){
+                try{var saved=MJSON.parse(MTA.read(old));if(saved.run_id===previous.id){shared=saved.pages||[];sharedFailures=saved.translation_failures||[];}}catch(_){}
+            }
+            var count=0,size=4;
+            for(var start=0;start<files.length;start+=size){
+                if(cfg.sourceKey && MTA.sourceProjectKey(cfg.folder.fsName,cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==cfg.sourceKey)
+                    throw Error('Ảnh đầu vào đã thay đổi trong khi chạy; dừng để tránh ghép nhầm. Các PDF đã xuất vẫn được giữ.');
+                var end=Math.min(files.length,start+size),indices=[];
+                for(var i=start;i<end;i++){
+                    var name=decodeURI(files[i].name),done=false;
+                    for(var j=0;j<shared.length;j++)if(shared[j].page===name && shared[j].status==='draft' && shared[j].mapped===shared[j].required && shared[j].files){
+                        var path=shared[j].files.pdf||shared[j].files.psd;
+                        if(path && (new File(path)).exists)done=true;
+                    }
+                    if(!done)indices.push(i);
+                }
+                if(!indices.length){count+=end-start;continue;}
+                cfg.note('Nhóm trang '+(start+1)+'–'+end+'/'+files.length+': OCR → dịch → clean → xuất PDF…');
+                var part={};for(var key in cfg)part[key]=cfg[key];
+                part.indices=indices;part.streamLimit=end;part.sharedLog=shared;part.sharedFailures=sharedFailures;part.openReport=false;
+                part.label='[Nhóm '+(start+1)+'–'+end+'/'+files.length+'] ';
+                last=runVolume(part);shared=last.log;sharedFailures=last.failed;count+=indices.length;
+                if(last.aborted)throw Error('Đã dừng dịch: '+last.abortReason+'. Các trang đã xuất vẫn được giữ; chạy lại để tiếp tục.');
+            }
+            if(!last && old){
+                var result=rpc({operation:'translation_report',project:cfg.project,log:old.fsName,title:cfg.title});
+                last={log:shared,logFile:old,failed:[],summary:result.summary,html:result.html};
+            }
+            if(!last)throw Error('Chưa tạo được kết quả.');
+            if(last.html){try{(new File(last.html)).execute();}catch(_){}}
+            return last;
         }
 
         // ---------- Rà soát nhanh: fix the few flagged bubbles without hunting through layers ----------
@@ -890,8 +1009,8 @@
         rtl.onClick = function () { state = null; };
         aiDetector.onClick = function () { state = null; syncInputs(); };
         detailChoice.onChange = function () { state = null; };
-        koharuOrder.onClick = function () { if(koharuOrder.value)magiOrder.value=false; state = null; };
-        magiOrder.onClick = function () { if(magiOrder.value)koharuOrder.value=false; state = null; };
+        koharuOrder.onClick = function () { if(koharuOrder.value)magiOrder.value=false; state = null; if(lastEnv)easyRenderPlan(lastEnv); };
+        magiOrder.onClick = function () { if(magiOrder.value)koharuOrder.value=false; state = null; if(lastEnv)easyRenderPlan(lastEnv); };
         lang.onChange = function () { state = null; };
         presets.onChange = function () {
             var values = [[10, 32, 1.05], [12, 28, 1.2], [18, 52, 1.05]][presets.selection.index];
@@ -1412,7 +1531,7 @@
         var easyNameRow=easyTab.add('group');easyNameRow.add('statictext',undefined,'Tên bộ truyện:');
         var easyName=easyNameRow.add('edittext',undefined,'');easyName.characters=30;
         easyNameRow.add('statictext',undefined,'Chế độ:');
-        var easyMode=easyNameRow.add('dropdownlist',undefined,['Nhanh (khuyên dùng)','Chất lượng (đọc cả ảnh, tốn hơn)']);easyMode.selection=0;
+        var easyMode=easyNameRow.add('dropdownlist',undefined,['Nhanh (khuyên dùng)','Chất lượng (kèm ảnh vùng thoại, tốn hơn)']);easyMode.selection=0;
         var easyEngineRow=easyTab.add('group');easyEngineRow.add('statictext',undefined,'Engine xoá chữ:');
         var easyEngineChoice=easyEngineRow.add('dropdownlist',undefined,['Tự động (khuyên dùng)']);easyEngineChoice.selection=0;easyEngineChoice.preferredSize.width=430;
         var easyEnvButton=easyEngineRow.add('button',undefined,'Kiểm tra môi trường');
@@ -1483,7 +1602,8 @@
         function easyRenderPlan(env){
             var lines=env.plan.slice(0),sel=easyEngineChoice.selection?easyEngineChoice.selection.index:0;
             if(sel>0&&engines[sel-1])lines[2]='Xoá chữ: engine '+engines[sel-1].label+' ('+engines[sel-1].id+', '+engines[sel-1].version+')'+(engines[sel-1].ready?'':' — THIẾU MODEL');
-            lines.push('Dịch: '+easyModelName.text+' qua '+easyHost.text+(easyMode.selection&&easyMode.selection.index===1?' (kèm đọc cả ảnh)':''));
+            lines.push('Thứ tự đọc: '+(magiOrder.value?'MAGI':(koharuOrder.value?'Koharu':'OpenCV')));
+            lines.push('Dịch: '+easyModelName.text+' qua '+easyHost.text+(easyMode.selection&&easyMode.selection.index===1?' (kèm ảnh vùng thoại; đọc cận số và cụm chữ Hán)':''));
             var missing=[];for(var i=0;i<env.items.length;i++)if(!env.items[i].ok&&env.items[i].required)missing.push(env.items[i].label);
             easyPlan.text=(missing.length?'THIẾU: '+missing.join('; ')+'. Bấm "Kiểm tra môi trường" để xem cách sửa.\n':'Sẽ chạy:\n')+lines.join('\n');
         }
@@ -1606,12 +1726,12 @@
                 if(MTA.sourceProjectKey(easyFolder.fsName,easyFiles())!==sourceKey)throw Error('Danh sách hoặc nội dung ảnh đầu vào đã thay đổi trong khi chạy thử. Hãy chạy lại với bộ ảnh ổn định.');
                 easySay((direct?'Bắt đầu trực tiếp. ':'Đã xong chạy thử. ')+'Đang nhận diện và đọc chữ toàn bộ '+count+' trang; bước này có thể mất thời gian.');
                 var projectFile=new File(out.fsName+'/project_'+sourceKey+'.json');
-                var res=runVolume({project:projectFile.fsName,profile:easyProfile(projectFile.fsName,mode),title:'Báo cáo: '+(easyName.text||'bộ truyện'),note:easySay,label:'',engine:engine,folder:easyFolder,output:out});
+                var res=runStreamingVolume({project:projectFile.fsName,profile:easyProfile(projectFile.fsName,mode),title:'Báo cáo: '+(easyName.text||'bộ truyện'),note:easySay,label:'',engine:engine,folder:easyFolder,output:out,sourceKey:sourceKey});
                 if(res.html){lastReportHtml=res.html;easyReport.enabled=true;}
                 var sm=res.summary||{ok:0,look:0,fix:0,pages:0};
-                var done='XONG '+sm.pages+' trang: '+sm.ok+' trang ổn, '+sm.look+' nên xem lại, '+sm.fix+' cần sửa.';
-                easySay(done+' Báo cáo chi tiết đã mở trong trình duyệt.');
-                alert(done+'\n\nBáo cáo (có ảnh từng chỗ cần xem) đã mở trong trình duyệt. file Photoshop PDF (giữ layer) nằm trong:\n'+out.fsName);
+                var done='ĐÃ XỬ LÝ '+sm.pages+' trang: '+sm.ok+' trang ổn, '+sm.look+' nên xem lại, '+sm.fix+' cần sửa.';
+                easySay(done+(res.html?' Báo cáo chi tiết đã mở trong trình duyệt.':' Chi tiết nằm trong log kết quả.'));
+                alert(done+'\n\n'+(res.html?'Báo cáo đã mở trong trình duyệt. ':'Log kết quả: '+(res.logFile?res.logFile.fsName:'chưa có')+'. ')+'File Photoshop PDF nằm trong:\n'+out.fsName);
                 if(sm.fix+sm.look>0&&confirm('Mở rà soát nhanh ngay bây giờ?\n(Bạn cũng có thể mở sau bằng nút "3. Rà soát nhanh trong Photoshop".)'))openReview(projectFile.fsName,out);
             });
         }

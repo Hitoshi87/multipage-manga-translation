@@ -20,6 +20,7 @@ from .prompts import compose
 from .qa import validate_response
 
 _GENDERED_QUOTE=re.compile(r'\b(?:(?:anh|em|chị|cô|chú|bác|ông|bà)\s+yêu|yêu\s+(?:anh|em|chị|cô|chú|bác|ông|bà))\b',re.I)
+_POSSIBLE_SPOKEN_SLIP=re.compile(r'[ぁ-んァ-ヶー]{2,}(?:…|\.{2,})')
 
 
 def _quote_consistency(rows,links):
@@ -56,6 +57,7 @@ def segment_version(segment):
     fields={key:segment.get(key) for key in ('id','page_id','page_ordinal','region_id','order','panel_id',
         'panel_status','source_revision','source_status','source_provenance')}
     if segment.get('ruby'):fields['ruby']=segment['ruby']
+    if segment.get('visual_ocr'):fields['visual_ocr']=segment['visual_ocr']
     return digest(fields)
 
 
@@ -189,6 +191,7 @@ def edit_source(path, segment_id, text, verified=False, based_on='manual'):
                 segment.setdefault('source_history', []).append({'jp':segment['jp'], 'revision':segment['source_revision'], 'at':now(),
                     'status':segment.get('source_status'), 'provenance':segment.get('source_provenance'), 'ruby':segment.get('ruby')})
                 if text != segment.get('jp'):segment.pop('ruby',None)
+                segment.pop('visual_ocr',None)
                 segment.update(jp=text, source_revision=revision(text), source_status='verified' if verified else 'user_corrected',
                     source_provenance={'based_on':based_on,'status':'user_reviewed' if verified else 'unverified'})
                 if verified: segment['verified_at']=now()
@@ -318,11 +321,97 @@ def auto_ocr_page(path, page_id, cancel=None):
         if not previous or segment_version(s)!=segment_version(previous):raise ValueError('Nguồn đã thay đổi trong khi OCR')
         value=suggestions.get(s['id'])
         if value:
-            if value!=s.get('jp'):s.pop('ruby',None)
+            if value!=s.get('jp'):
+                s.pop('ruby',None);s.pop('visual_ocr',None)
             s.update(jp=value,source_revision=revision(value),source_status='unreviewed',
                      source_provenance={'based_on':'baberu','status':'unverified'})
     target['baberu_auto_complete']=True;save(path,latest)
     return envelope('ocr','review_required',{'page_id':page_id,'suggested':len(suggestions),'verified':False})
+
+
+def visual_ocr_page(path, page_id, cancel=None):
+    """Independently transcribe selected crops, without feeding the OCR to vision.
+
+    One bounded request handles up to eight crops on a page. The model's text
+    remains a proposal; it never overwrites or verifies the Japanese source.
+    """
+    from .vision import focused_plan, image_parts, MAX_DETAIL_CROPS
+    state=load(path)
+    if not state['profiles']:raise ValueError('Cần cấu hình series')
+    profile=state['profiles'][-1];settings=profile['values']
+    if settings.get('vision_mode','off')=='off':
+        return envelope('visual_ocr','completed',{'page_id':page_id,'done':True,'skipped':'vision_off'})
+    page=next((p for p in state['pages'] if p['page_id']==page_id),None)
+    if not page:raise ValueError('Không tìm thấy trang')
+    ids={s['id'] for s in page['segments']}
+    for run in state['runs']:
+        if any(ids.intersection(t['id'] for t in g.get('targets',[])+g.get('context',[])) for g in run.get('groups',[])):
+            return envelope('visual_ocr','completed',{'page_id':page_id,'done':True,'skipped':'run_already_references_page'})
+    eligible=[]
+    for segment in page['segments']:
+        # Long runs of kanji may contain names or terms with small furigana.
+        # This is a retrieval heuristic, not a claim that a name is present.
+        jp=unicodedata.normalize('NFKC',segment.get('jp') or '')
+        raw=''.join((unicodedata.normalize('NFKC',segment.get('raw_ocr') or '')).split())
+        prefix=re.match(r'^[ァ-ヺー]{2,}',jp)
+        outside_sfx_suspect=bool(prefix and raw and prefix.group() not in raw)
+        if segment.get('source_status') in ('verified','user_corrected','excluded') or not (
+            re.search(r'[0-9]|[\u3400-\u9fff]{4,}',jp) or outside_sfx_suspect):continue
+        cached=segment.get('visual_ocr') or {}
+        if (cached.get('based_on_revision')==segment.get('source_revision') and
+            cached.get('image_digest')==page.get('image_digest') and cached.get('profile_revision')==profile['revision']):continue
+        eligible.append(segment)
+    if not eligible:return envelope('visual_ocr','completed',{'page_id':page_id,'done':True,'attempted':0})
+    targets=eligible[:MAX_DETAIL_CROPS]
+    if cancel and Path(cancel).exists():raise ValueError('Đã hủy')
+    plan=focused_plan(state,targets)
+    call_profile={**settings,'_vision_images':image_parts(plan)}
+    payload={'crops':[{'id':s['id'],'image_number':i+1} for i,s in enumerate(targets)]}
+    system=('Independently transcribe Japanese text, Arabic digits and small furigana inside the target balloon in each image. '
+        'Ignore sound effects and other lettering outside that balloon. '
+        'The images are numbered in the same order as crops. Read each crop, including small digits and readings; '
+        'do not translate or guess blurred characters. No OCR transcription is provided. '
+        'Return JSON only: {"items":[{"id":"crop id","main_text":"Japanese text or empty string",'
+        '"furigana":[{"base":"text in main_text","reading":"visible kana"}],'
+        '"uncertain":true or false}]}. Use an empty furigana list if unreadable. Return one item per crop in order.')
+    raw,meta=call_provider(call_profile,system,payload)
+    try:result=json.loads(raw)
+    except (TypeError,ValueError) as exc:raise ValueError('OCR ảnh cận trả JSON không hợp lệ') from exc
+    rows=result.get('items') if isinstance(result,dict) and set(result)=={'items'} else None
+    if (not isinstance(rows,list) or len(rows)!=len(targets) or
+        any(not isinstance(row,dict) or not {'id','main_text','uncertain'}.issubset(row) or set(row)-{'id','main_text','furigana','uncertain'} or
+            row['id']!=target['id'] or not isinstance(row['main_text'],str) or
+            len(row['main_text'])>4000 or type(row['uncertain']) is not bool or
+            not isinstance(row.get('furigana',[]),list) or len(row.get('furigana',[]))>32
+            for row,target in zip(rows,targets))):
+        raise ValueError('OCR ảnh cận trả sai danh sách vùng')
+    # Invalid optional readings must not discard other useful transcriptions.
+    # They remain unverified and are explicitly marked uncertain.
+    for row in rows:
+        readings=row.get('furigana',[]);valid=[]
+        if not row['main_text'].strip():row['uncertain']=True
+        for f in readings:
+            if (isinstance(f,dict) and set(f)=={'base','reading'} and isinstance(f['base'],str) and
+                f['base'] and f['base'] in row['main_text'] and isinstance(f['reading'],str) and
+                re.fullmatch(r'[\u3040-\u30ffー]{1,80}',f['reading'])):
+                valid.append(f)
+        if len(valid)!=len(readings):row['uncertain']=True
+        row['furigana']=valid
+    if cancel and Path(cancel).exists():raise ValueError('Đã hủy')
+    if any(sha256_file(item['image_path'])!=item['image_sha256'] for item in plan):raise ValueError('Ảnh đã đổi trong khi OCR ảnh cận')
+    latest=load(path);current_page=next(p for p in latest['pages'] if p['page_id']==page_id)
+    if latest['profiles'][-1]['revision']!=profile['revision'] or current_page.get('image_digest')!=page.get('image_digest'):
+        raise ValueError('Profile hoặc ảnh đã đổi trong khi OCR ảnh cận')
+    current={s['id']:s for s in current_page['segments']}
+    for target,row in zip(targets,rows):
+        segment=current.get(target['id'])
+        if not segment or segment_version(segment)!=segment_version(target):raise ValueError('Nguồn đã đổi trong khi OCR ảnh cận')
+        segment['visual_ocr']={'main_text':row['main_text'].strip(),'uncertain':row['uncertain'],
+            'furigana':row.get('furigana',[]),'status':'proposed','origin':'independent_vision_crop','based_on_revision':segment['source_revision'],
+            'image_digest':page['image_digest'],'profile_revision':profile['revision']}
+    save(path,latest)
+    return envelope('visual_ocr','review_required',{'page_id':page_id,'done':len(eligible)<=MAX_DETAIL_CROPS,
+        'attempted':len(targets),'verified':False,'metadata':meta})
 
 
 def verify_page(manifest_path, snapshot_path):
@@ -359,6 +448,64 @@ def prepare(path):
            'groups':groups, 'blocked_ids':[s['id'] for s in segments if not s['jp'] and s.get('source_status') != 'excluded']}
     state['runs'].append(run); save(path,state)
     return envelope('prepare','review_required' if run['blocked_ids'] else 'completed',run,job_id=run['id'])
+
+
+def prepare_stream(path, max_page_ordinal):
+    """Append bounded chronological groups to a frozen streaming run."""
+    from .grouping import build_groups
+    if type(max_page_ordinal) is not int or max_page_ordinal < 1:
+        raise ValueError('Giới hạn trang không hợp lệ')
+    state=load(path)
+    if not state['profiles'] or not state['pages']:
+        raise ValueError('Cần cấu hình series và index ít nhất một trang')
+    profile=state['profiles'][-1];settings=profile['values']
+    existing=state['runs'][-1] if state['runs'] else None
+    if existing and existing.get('streaming'):
+        max_page_ordinal=max(max_page_ordinal,existing.get('max_page_ordinal',0))
+    segments=[s for p in state['pages'] if p['ordinal']<=max_page_ordinal for s in p['segments']]
+    ready=[s for s in segments if s.get('jp') and s.get('source_status')!='excluded']
+    blocked=[s['id'] for s in segments if not s.get('jp') and s.get('source_status')!='excluded']
+    run=state['runs'][-1] if state['runs'] else None
+    if not run or not run.get('streaming'):
+        system=compose(settings)
+        run={'id':'run_'+uuid.uuid4().hex,'profile_revision':profile['revision'],'created_at':now(),
+             'compiled_system':system,'compiled_system_revision':digest(system),'grouping_version':'quote_links_v1',
+             'streaming':True,'groups':[],'blocked_ids':[],'max_page_ordinal':0}
+        state['runs'].append(run)
+    if run['profile_revision']!=profile['revision'] or unsafe_cast_snapshot(run,settings):
+        raise ValueError('Profile đã thay đổi; tạo project mới để dịch tiếp an toàn')
+    targets=[t for g in run['groups'] for t in g['targets']]
+    contexts=[t for g in run['groups'] for t in g['context']]
+    current={s['id']:s for s in segments}
+    target_ids=[t['id'] for t in targets]
+    if (len(target_ids)!=len(set(target_ids)) or
+            any(not same_source(t,current.get(t['id'])) for t in targets+contexts)):
+        raise ValueError('Nguồn đã thay đổi; tạo project mới để dịch tiếp an toàn')
+    if any(sid not in blocked for sid in run.get('blocked_ids',[])):
+        raise ValueError('Nguồn bị chặn đã thay đổi; tạo project mới để dịch tiếp an toàn')
+    # A failed page may be indexed on a later attempt after subsequent pages
+    # have already been exported. Build its missing targets independently,
+    # using only source segments earlier in reading order as context.
+    known=set(target_ids)
+    index=0
+    while index<len(ready):
+        if ready[index]['id'] in known:
+            index+=1
+            continue
+        start=index
+        while index<len(ready) and ready[index]['id'] not in known:
+            index+=1
+        new=ready[start:index]
+        run['groups'].extend(build_groups(new,version=segment_version,system=run['compiled_system'],
+            group_size=int(settings['group_size']),context_segments=int(settings.get('context_segments',2)),
+            max_input_chars=int(settings.get('max_input_chars',24000)),
+            max_pages=4 if settings.get('vision_mode','off')!='off' else None,
+            # Quote detection reaches farther back than the ordinary context
+            # window, but selected context remains bounded by input limits.
+            prior_context=ready[max(0,start-16):start]))
+    run['blocked_ids']=blocked;run['max_page_ordinal']=max_page_ordinal
+    save(path,state)
+    return envelope('prepare','review_required' if blocked else 'completed',run,job_id=run['id'])
 
 
 def resume_or_prepare(path):
@@ -410,15 +557,30 @@ def run_group(path, run_id, group_id, cancel=None):
         raw, meta = call_provider(call_profile, run['compiled_system'], payload)
         rows = validate_response(raw,group['targets'])
         _quote_consistency(rows,group.get('quote_links',[]))
+        def content(text):return ''.join(c for c in unicodedata.normalize('NFKC',text) if c.isalnum())
         for target,row in zip(group['targets'],rows):
             if '「' in target['jp'] and '」' in target['jp'] and _GENDERED_QUOTE.search(row['vi']):
                 if 'ambiguous_reference' not in row['flags']:row['flags'].append('ambiguous_reference')
                 if 'needs_review' not in row['flags']:row['flags'].append('needs_review')
+            # OCR and the vision model can agree on the same wrong digit.
+            # A numeral in an unverified source therefore requires review;
+            # this is a warning, never an automatic numerical correction.
+            if target.get('source_status') not in ('verified','user_corrected') and re.search(r'[0-9０-９]',target['jp']):
+                row.setdefault('_qa_warnings',[]).append('numeric_source_unverified')
+                if 'needs_review' not in row['flags']:row['flags'].append('needs_review')
+            alternative=target.get('visual_ocr') or {}
+            if alternative and (alternative.get('uncertain') or
+                                alternative.get('main_text') and content(alternative['main_text'])!=content(target['jp'])):
+                for flag in ('ocr_suspect','needs_review'):
+                    if flag not in row['flags']:row['flags'].append(flag)
         unresolved={key for link in group.get('unresolved_quote_links',[]) for key in (link['source_id'],link['quote_id'])}
+        target_ids={target['id'] for target in group['targets']}
+        cross_quotes={link['quote_id'] for link in group.get('unresolved_quote_links',[])
+                      if link['source_id'] not in target_ids}
         for row in rows:
             if row['id'] in unresolved and 'needs_review' not in row['flags']:row['flags'].append('needs_review')
+            if row['id'] in cross_quotes:row.setdefault('_qa_warnings',[]).append('quote_cross_batch')
         if mode!='off':
-            def content(text):return ''.join(c for c in unicodedata.normalize('NFKC',text) if c.isalnum())
             for target,row in zip(group['targets'],rows):
                 evidence=row.get('source_evidence')
                 if evidence and content(evidence['main_text'])!=content(target['jp']):
@@ -522,6 +684,72 @@ def review_group(path, run_id, group_id, cancel=None):
     return envelope('semantic_qa','review_required' if result['issues'] else 'completed',review,job_id=run_id)
 
 
+def repair_slip_group(path,run_id,group_id,cancel=None):
+    """Retry flagged possible slips from Japanese; keep every revision reviewable."""
+    from .grouping import payload_for_group
+    state=load(path);run=next((r for r in state['runs'] if r['id']==run_id),None)
+    group=next((g for g in run['groups'] if g['id']==group_id),None) if run else None
+    if not group or group['status']!='completed':raise ValueError('Nhóm chưa dịch xong')
+    profile=next(p['values'] for p in state['profiles'] if p['revision']==run['profile_revision'])
+    if unsafe_cast_snapshot(run,profile):raise ValueError('Lượt cũ chứa cast chưa giới hạn thời gian; tạo lượt dịch mới')
+    if profile.get('vision_mode','off')=='off':return envelope('slip_repair','completed',{'attempted':False})
+    current={s['id']:s for p in state['pages'] for s in p['segments']}
+    if state['profiles'][-1]['revision']!=run['profile_revision'] or any(not same_source(t,current.get(t['id'])) for t in group['targets']+group['context']):
+        raise ValueError('Nguồn hoặc profile đã thay đổi')
+    rows={r['id']:r for r in group['results']}
+    chosen=[t for t in group['targets'] if t['id'] in rows and rows[t['id']]['status']!='human_approved'
+        and any(f in rows[t['id']].get('flags',[]) for f in ('needs_review','ocr_suspect'))
+        and _POSSIBLE_SPOKEN_SLIP.search(re.sub(r'「[^」]*」','',unicodedata.normalize('NFKC',t['jp'])))]
+    if not chosen:return envelope('slip_repair','completed',{'attempted':False})
+    chosen_ids={t['id'] for t in chosen}
+    subset={'targets':chosen,'context':group['context']+[t for t in group['targets'] if t['id'] not in chosen_ids]}
+    payload=payload_for_group(subset)
+    payload['draft_for_review']=[{'id':t['id'],'vi':rows[t['id']]['semantic_translation']} for t in chosen]
+    from .vision import image_plan,public_plan,image_parts
+    plan=image_plan(state,subset,profile['vision_mode']);payload['image_context']=public_plan(plan)
+    system=(run['compiled_system']+'\n\nReview the supplied draft against the Japanese and image. '
+        'The draft is not evidence. A mispronunciation followed by a correction is two meaningful phrases: '
+        'reproduce both naturally in Vietnamese. If the draft drops or normalizes a clear mistake, '
+        'fix it by altering one syllable in the Vietnamese word while preserving the intended phrase. '
+        'If the source is not a clear mispronunciation or remains unclear, keep the draft and flag needs_review. '
+        'Return source_evidence.main_text exactly as read from the image, without guessing.')
+    if len(system)+len(json.dumps(payload,ensure_ascii=False))>int(profile.get('max_input_chars',24000)):
+        raise ValueError('Nhóm rà nói nhịu vượt giới hạn đầu vào')
+    if cancel and Path(cancel).exists():raise ValueError('Đã hủy')
+    before=digest(group['results'])
+    raw,meta=call_provider({**profile,'_vision_images':image_parts(plan)},system,payload)
+    proposals=validate_response(raw,chosen)
+    if cancel and Path(cancel).exists():raise ValueError('Đã hủy')
+    if any(sha256_file(x['image_path'])!=x['image_sha256'] for x in plan):raise ValueError('Ảnh đã đổi trong khi dịch')
+    latest=load(path);current={s['id']:s for p in latest['pages'] for s in p['segments']}
+    if latest['profiles'][-1]['revision']!=run['profile_revision'] or any(not same_source(t,current.get(t['id'])) for t in group['targets']+group['context']):raise ValueError('Nguồn đã đổi trong khi rà nói nhịu')
+    dest=next(g for r in latest['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id)
+    if digest(dest['results'])!=before:raise ValueError('Bản dịch đã đổi trong khi rà nói nhịu')
+    byid={r['id']:r for r in dest['results']};changed=[]
+    def content(value):return ''.join(c for c in unicodedata.normalize('NFKC',value) if c.isalnum())
+    for target,proposal in zip(chosen,proposals):
+        row=byid[target['id']];evidence=proposal.get('source_evidence') or {}
+        old=row['semantic_translation'];new=proposal['vi']
+        # A source-matching visual transcription and roughly comparable
+        # length are minimum gates, not proof of semantic correctness.
+        if (not evidence.get('main_text') or content(evidence['main_text'])!=content(target['jp']) or
+            new==old or not .5<=len(new)/max(1,len(old))<=2):continue
+        row.setdefault('history',[]).append({'text':old,'status':row['status'],'reason':'slip_retry','at':now()})
+        row['semantic_translation']=new;row['status']='needs_review'
+        row.pop('lettering_translation',None);row.pop('lettering_status',None)
+        row['qa_warnings']=[w for w in row.get('qa_warnings',[]) if w!='lettering_needs_review']
+        row['source_evidence']={**evidence,'status':'proposed','origin':'vision_model','source_id':target['id']}
+        for flag in proposal['flags']:
+            if flag not in row['flags']:row['flags'].append(flag)
+        if 'needs_review' not in row['flags']:row['flags'].append('needs_review')
+        changed.append(row['id'])
+    _quote_consistency([{'id':row['id'],'vi':row['semantic_translation'],'flags':row['flags']}
+                        for row in dest['results']],dest.get('quote_links',[]))
+    dest.setdefault('slip_repairs',[]).append({'at':now(),'targets':[t['id'] for t in chosen],'changed':changed,'metadata':meta})
+    save(path,latest)
+    return envelope('slip_repair','review_required',{'attempted':True,'changed':changed})
+
+
 def repair_quote_group(path,run_id,group_id,cancel=None):
     """Retry an unsupported gendered quotation directly from Japanese, as draft only."""
     from .grouping import payload_for_group
@@ -546,6 +774,8 @@ def repair_quote_group(path,run_id,group_id,cancel=None):
         'Avoid adding unsupported gender, seniority, romantic relationships, or address forms. '
         'Do not use anh, em, chị, cô, chú, bác, ông or bà as the quoted speaker or addressee unless explicitly established. '
         'For familiar peers, a natural tớ/cậu or mình/cậu register can be suitable if supported by the scene or series settings. '
+        'Example for a conversation between peers: 「大好き」と言ってくれ can become Nói “tớ thích cậu lắm” đi. '
+        'The speaker in the quotation is the person asked to repeat it. Do not invent a gendered relationship. '
         'Do not default to stiff tôi/bạn or add a speech frame or addressee already expressed in the preceding bubble. '
         'Otherwise omit unsupported pronouns while preserving the Japanese speech act; retain uncertainty flags.')
     call_profile=profile;plan=[]
@@ -631,7 +861,7 @@ def approve_lettering(path, run_id, segment_id, text):
     return envelope('review','completed',{'id':segment_id,'lettering_status':'human_approved'},job_id=run_id)
 
 
-def export_mapping(path, run_id, draft=False):
+def export_mapping(path, run_id, draft=False, page_ids=None):
     state=load(path); run=next(r for r in state['runs'] if r['id']==run_id)
     if state['profiles'][-1]['revision'] != run['profile_revision']:
         raise ValueError('Profile đã thay đổi; kết quả cần dịch lại hoặc duyệt lại')
@@ -641,6 +871,8 @@ def export_mapping(path, run_id, draft=False):
              for v in g['results'] if draft or v['status'] in ('human_approved','auto_accepted')}
     pages=[]
     for page in state['pages']:
+        if page_ids is not None and page['page_id'] not in page_ids:
+            continue
         mapping=[];review=[]
         manifest_path=Path(page['manifest'])
         image_path=manifest_path.parent/'original.png'

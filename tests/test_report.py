@@ -57,7 +57,7 @@ class ReportTests(unittest.TestCase):
 
     def test_generic_model_doubts_are_light_notes_and_do_not_make_a_page_worth_a_look(self):
         from manga_ai.report import collect_items, summarise
-        page = dict(self.log['pages'][1], page='07.jpg', review=[{'region_id': 'B009', 'flags': ['ambiguous_reference', 'needs_review']}])
+        page = dict(self.log['pages'][1], page='07.jpg', review=[{'region_id': 'B009', 'flags': ['ambiguous_reference']}])
         items, pages = collect_items({'pages': [page]}, {})
         self.assertEqual(pages[0]['status'], 'ok')
         self.assertEqual([i['severity'] for i in items], ['note'])
@@ -94,6 +94,19 @@ class ReportTests(unittest.TestCase):
         self.assertEqual([i['severity'] for i in items], ['fix', 'fix', 'look'])        # fixes first
         look = next(i for i in items if i['region'] == 'B002')
         self.assertEqual(look['codes'], ['speaker_unclear', 'long_for_bubble'])
+
+    def test_reused_old_panel_order_is_visible_as_page_review(self):
+        page={'page':'02.jpg','status':'draft','required':1,'mapped':1,'reading_order_review':'opencv'}
+        items,pages=collect_items({'pages':[page]}, {})
+        self.assertEqual(pages[0]['status'],'look')
+        self.assertEqual(items[0]['codes'],['reading_order_review'])
+
+    def test_needs_review_is_not_hidden_as_a_minor_note(self):
+        page={'page':'02.jpg','status':'draft','required':1,'mapped':1,
+              'review':[{'region_id':'B001','flags':['needs_review']}]}
+        items,pages=collect_items({'pages':[page]}, {})
+        self.assertEqual(pages[0]['status'],'look')
+        self.assertEqual(items[0]['severity'],'look')
 
     def test_html_is_written_with_summary_thumbnails_and_escaped_text(self):
         result = build_report(self.project, self.log_path)

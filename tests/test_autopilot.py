@@ -28,6 +28,92 @@ class AutopilotTests(unittest.TestCase):
         rows = [{'id': x['id'], 'vi': 'Xin chào', 'flags': []} for x in payload['segments']]
         return json.dumps({'translations': rows}), {'usage': {'prompt_tokens': 100, 'completion_tokens': 20}, 'latency_ms': 2000, 'model_returned': 'm'}
 
+    def test_streaming_reuses_previous_results_and_context_without_future_pages(self):
+        requests=[]
+        def provider(profile,system,payload):
+            requests.append(payload)
+            return self.ok(profile,system,payload)
+        with patch.object(service,'call_provider',side_effect=provider):
+            first=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1)
+            self.assertTrue(first['done'])
+            self.assertEqual(len(requests),1)
+            second=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=2)
+            self.assertEqual(second['run_id'],first['run_id'])
+            self.assertEqual(len(requests),2)
+            self.assertEqual([s['page_id'] for s in requests[1]['context_only']],['page1'])
+            self.assertEqual([s['page_id'] for s in requests[1]['segments']],['page2'])
+            again=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=2)
+            self.assertEqual(again['run_id'],first['run_id'])
+            self.assertEqual(len(requests),2)
+        run=service.load(self.project)['runs'][-1]
+        self.assertEqual(len(run['groups']),2)
+        self.assertNotIn('page3',[t['page_id'] for g in run['groups'] for t in g['targets']])
+        (self.dir/'3'/'original.png').unlink()  # unrelated future page must not block this export
+        mapping=service.export_mapping(self.project,first['run_id'],draft=True,page_ids=['page2'])
+        self.assertEqual([p['page_id'] for p in mapping['data']['pages']],['page2'])
+
+    def test_streaming_rejects_changed_prior_source(self):
+        with patch.object(service,'call_provider',side_effect=self.ok):
+            first=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1)
+        state=service.load(self.project);segment=state['pages'][0]['segments'][0]
+        service.edit_source(self.project,segment['id'],'変更された文章')
+        with self.assertRaisesRegex(ValueError,'Nguồn đã thay đổi'):
+            autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=2)
+        self.assertEqual(service.load(self.project)['runs'][-1]['id'],first['run_id'])
+
+    def test_failed_page_can_be_indexed_later_without_future_context(self):
+        state=service.load(self.project)
+        state['pages']=[page for page in state['pages'] if page['page_id']!='page2']
+        service.save(self.project,state)
+        calls=[]
+        def provider(profile,system,payload):
+            calls.append(payload)
+            return self.ok(profile,system,payload)
+        with patch.object(service,'call_provider',side_effect=provider):
+            first=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=3)
+            service.index_page(self.project,self.dir/'2'/'manifest.json','page2',2)
+            again=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=3)
+        self.assertEqual(first['run_id'],again['run_id'])
+        self.assertEqual([x['page_id'] for x in calls[-1]['segments']],['page2'])
+        self.assertEqual([x['page_id'] for x in calls[-1]['context_only']],['page1'])
+        self.assertEqual(len(calls),3)
+
+    def test_quote_from_previous_batch_is_visible_in_review_queue(self):
+        state=service.load(self.project)
+        service.edit_source(self.project,state['pages'][0]['segments'][0]['id'],'みにゃさん、こんにちは')
+        service.edit_source(self.project,state['pages'][1]['segments'][0]['id'],'「みにゃさん」って何ですか')
+        with patch.object(service,'call_provider',side_effect=self.ok):
+            autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1)
+            autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=2)
+        run=service.load(self.project)['runs'][-1]
+        row=next(r for g in run['groups'] for r in g['results'] if r['id']==state['pages'][1]['segments'][0]['id'])
+        self.assertIn('quote_cross_batch',row['qa_warnings'])
+        from manga_ai import report
+        self.assertEqual(report.severity(row['qa_warnings']),'look')
+
+    def test_one_group_and_one_attempt_per_slice_remains_resumable(self):
+        calls=[]
+        def flaky(profile,system,payload):
+            calls.append(payload['segments'][0]['jp'])
+            if len(calls)==1:raise ValueError('API tạm thời lỗi HTTP 503')
+            return self.ok(profile,system,payload)
+        with patch.object(service,'call_provider',side_effect=flaky):
+            first=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=3,max_groups=1,max_slice_attempts=1,sleep=lambda _:None)
+            self.assertFalse(first['done']);self.assertEqual(len(calls),1)
+            second=autopilot.autopilot(self.project,run_id=first['run_id'],auto_exclude=False,max_groups=1,max_slice_attempts=1,sleep=lambda _:None)
+            self.assertFalse(second['done']);self.assertEqual(second['completed'],1)
+            third=autopilot.autopilot(self.project,run_id=first['run_id'],auto_exclude=False,max_groups=1,max_slice_attempts=1,sleep=lambda _:None)
+            self.assertEqual(third['completed'],2)
+        self.assertEqual(calls[0],calls[1])
+
+    def test_unrecorded_validation_failures_eventually_park(self):
+        with patch.object(service,'run_group',side_effect=ValueError('Nguồn đã thay đổi')):
+            first=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1,max_groups=1,max_slice_attempts=1)
+            second=autopilot.autopilot(self.project,run_id=first['run_id'],auto_exclude=False,max_groups=1,max_slice_attempts=1)
+            third=autopilot.autopilot(self.project,run_id=first['run_id'],auto_exclude=False,max_groups=1,max_slice_attempts=1)
+        self.assertFalse(first['done']);self.assertFalse(second['done'])
+        self.assertTrue(third['done']);self.assertEqual(len(third['parked']),1)
+
     def test_transient_errors_are_retried_with_backoff_then_succeed(self):
         calls = {'n': 0}
         sleeps = []

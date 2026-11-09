@@ -29,10 +29,13 @@ REASONS = {
     'art_inpaint': (LOOK, 'Máy vẽ lại nền, hãy nhìn xem có tự nhiên không'),
     'contrast': (LOOK, 'Chữ trên nền tranh, kiểm tra viền chữ có đọc được'),
     'ocr_suspect': (LOOK, 'Máy có thể đọc sai chữ Nhật'),
-    'needs_review': (NOTE, 'Máy chưa chắc bản dịch'),
+    'needs_review': (LOOK, 'Máy chưa chắc bản dịch; cần đối chiếu nguồn'),
     'speaker_unclear': (LOOK, 'Chưa rõ ai nói với ai (cách xưng hô)'),
     'ambiguous_reference': (NOTE, 'Câu có chỗ mơ hồ'),
     'glossary_conflict': (LOOK, 'Tên hoặc thuật ngữ chưa thống nhất'),
+    'quote_cross_batch': (LOOK, 'Câu nhắc lại từ nhóm trước; kiểm tra hai bản dịch có nhất quán'),
+    'reading_order_review': (LOOK, 'Trang giữ thứ tự đọc cũ để bảo toàn bản đã dịch hoặc sửa tay; cần kiểm tra'),
+    'numeric_source_unverified': (LOOK, 'Nguồn có số chưa được xác nhận; đối chiếu chữ số và đơn vị với ảnh gốc'),
     'japanese_left': (LOOK, 'Còn chữ Nhật trong bản dịch'),
     'odd_symbols': (LOOK, 'Có ký hiệu lạ'),
     'dash_added': (NOTE, 'Có dấu gạch dài không có trong bản gốc'),
@@ -71,6 +74,8 @@ def collect_items(log, texts):
             per.setdefault(region, [])
             if code not in per[region]:
                 per[region].append(code)
+        if page.get('reading_order_review'):
+            add(None, 'reading_order_review')
         for region in page.get('clean_skipped', []):
             add(region, 'clean_skipped')
         for region in page.get('manual_text', []):
@@ -241,7 +246,7 @@ def build_report(project, log_path, out_path=None, title='Báo cáo dịch truy�
             line += " PDF giữ layer nhúng cả PSD nên nặng; chọn kiểu PDF Phẳng, hoặc đặt Màu xuất là RGB hay giữ nguyên thay vì CMYK, trong tab Tự động để nhẹ hơn."
         notes.append(line)
     if log.get('translation_failures'):
-        notes.append(f"{len(log['translation_failures'])} nhóm câu dịch lỗi nhiều lần; những câu đó chưa có bản dịch.")
+        notes.append(f"Có {len(log['translation_failures'])} sự cố khi dịch hoặc xử lý OCR; xem log để biết công đoạn và trang bị ảnh hưởng.")
     out = Path(out_path) if out_path else Path(log_path).with_name('BAO_CAO.html')
     out.write_text(render_html(title, summary, pages, items, notes), encoding='utf8')
     return {'html': str(out), 'summary': summary}

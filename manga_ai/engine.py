@@ -24,7 +24,6 @@ from .io import checked_mapping, read_json, write_json, validate_manifest
 from .coordinates import analysis_image, project_regions, project_box, project_mask
 
 cv2.setNumThreads(1)
-MAX_PIXELS = 30_000_000
 LANGUAGES = ("eng", "jpn", "jpn_vert", "chi_sim", "chi_tra", "kor")
 
 
@@ -86,8 +85,6 @@ def tesseract_path():
 
 def read_image(path):
     with Image.open(path) as image:
-        if image.width * image.height > MAX_PIXELS:
-            raise ValueError("Trang vượt 30 triệu pixel; hãy chia trang manhwa dài thành nhiều phần")
         image = ImageOps.exif_transpose(image)
         if "A" in image.getbands() or "transparency" in image.info:
             rgba = image.convert("RGBA")
@@ -215,6 +212,10 @@ def reading_order(regions, rtl, panels=None, panels_sorted=False):
             owners=[i for i,b in enumerate(ordered_panels) if b[0]-3<=cx<=b[0]+b[2]+3 and b[1]-3<=cy<=b[1]+b[3]+3]
             if owners:buckets[min(owners,key=lambda i:ordered_panels[i][2]*ordered_panels[i][3])].append(r)
             else:outside.append(r)
+        # Incomplete panel detection must not move unassigned dialogue after
+        # every detected panel. Fall back to spatial ordering for the whole page.
+        if not panels_sorted and any(r.get('detector')=='ai_balloon' and r.get('auto_clean') for r in outside):
+            return reading_order(regions,rtl)
         return [r for group in buckets for r in reading_order(group,rtl)]+reading_order(outside,rtl)
     """Group vertically overlapping bubbles into rows, then sort within each row."""
     rows = []

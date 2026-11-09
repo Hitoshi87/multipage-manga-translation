@@ -41,11 +41,12 @@ def assign_pixels(alpha, regions, margin=MARGIN):
     painted = alpha > 0
     labels = np.full(alpha.shape, -1, np.int32)
     labels[painted] = -2
-    masks = [_polygon(r, alpha.shape, margin) for r in regions]
-    # Smaller outlines first so a bubble inside another keeps its own pixels.
-    order = sorted(range(len(regions)), key=lambda i: int(masks[i].sum()))
+    # Compute the exact old order without retaining one full-page mask per
+    # region: large scans otherwise use O(page pixels * bubble count) RAM.
+    areas = [int(_polygon(r, alpha.shape, margin).sum()) for r in regions]
+    order = sorted(range(len(regions)), key=lambda i: areas[i])
     for index in order:
-        take = masks[index] & (labels == -2)
+        take = _polygon(regions[index], alpha.shape, margin) & (labels == -2)
         labels[take] = index
     left = (labels == -2)
     if left.any():

@@ -33,7 +33,7 @@ def _failed_attempts(group):
 
 
 def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=None, cancel=None,
-                         sleep=time.sleep, now=time.monotonic):
+                         sleep=time.sleep, now=time.monotonic, max_slice_attempts=None):
     """Run one group, retrying transient failures. Never raises for provider errors."""
     state = service.load(path)
     run = next(r for r in state['runs'] if r['id'] == run_id)
@@ -46,14 +46,24 @@ def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=Non
         if deadline is not None and now() >= deadline:
             return {'group_id': group_id, 'status': 'pending', 'attempts': tries, 'error': last, 'kind': kind}
         tries += 1
+        before_attempts=_failed_attempts(next(g for r in service.load(path)['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id))
         try:
             service.run_group(path, run_id, group_id, cancel)
             return {'group_id': group_id, 'status': 'completed', 'attempts': tries, 'error': '', 'kind': ''}
         except Exception as exc:  # provider, schema and source errors all arrive as exceptions
             last = str(exc)
+            # Validation can fail before run_group enters its own try/except.
+            # Record that failure too, so a resumable slice cannot loop forever.
+            latest=service.load(path)
+            current=next(g for r in latest['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id)
+            if current['status']!='completed' and _failed_attempts(current)==before_attempts:
+                current['status']='failed';current.setdefault('attempts',[]).append({'at':service.now(),'status':'failed','error':last[:300]})
+                service.save(path,latest)
             kind = classify_error(last)
             if kind != 'transient':
                 break
+            if max_slice_attempts is not None and tries >= max_slice_attempts and already + tries < max_attempts:
+                return {'group_id': group_id, 'status': 'pending', 'attempts': tries, 'error': last, 'kind': kind}
             if already + tries < max_attempts:
                 delay = min(2 ** tries, 8)
                 if deadline is not None:
@@ -64,26 +74,32 @@ def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=Non
 
 
 def autopilot(path, run_id=None, *, max_attempts=3, budget_seconds=None, max_consecutive=5, auto_exclude=True,
-              cancel=None, progress=None, sleep=time.sleep, now=time.monotonic):
+              cancel=None, progress=None, sleep=time.sleep, now=time.monotonic, max_page_ordinal=None,
+              max_groups=None, max_slice_attempts=None):
     """Translate every pending group of the latest (or given) run.
 
     Returns a report; `done` is True when nothing is left to do (all groups
     completed or parked after `max_attempts` failures).
     """
     started = now()
+    if max_groups is not None and (type(max_groups) is not int or max_groups < 1):
+        raise ValueError('Giới hạn nhóm không hợp lệ')
+    if max_slice_attempts is not None and (type(max_slice_attempts) is not int or max_slice_attempts < 1):
+        raise ValueError('Giới hạn lượt thử không hợp lệ')
     deadline = started + budget_seconds if budget_seconds else None
     excluded = None
     if run_id is None:
         if auto_exclude:
             from .triage import auto_exclude as triage_exclude
-            excluded = triage_exclude(path)
-        run = service.resume_or_prepare(path)['data']
+            excluded = triage_exclude(path, max_page_ordinal=max_page_ordinal)
+        run = (service.prepare_stream(path,max_page_ordinal) if max_page_ordinal is not None else service.resume_or_prepare(path))['data']
         run_id = run['id']
     state = service.load(path)
     run = next((r for r in state['runs'] if r['id'] == run_id), None)
     if not run:
         raise ValueError('Không tìm thấy run')
     failed, consecutive, aborted, reason = [], 0, False, ''
+    visited=0
     for index, group in enumerate(run['groups'], 1):
         if group['status'] == 'completed':
             continue
@@ -92,11 +108,14 @@ def autopilot(path, run_id=None, *, max_attempts=3, budget_seconds=None, max_con
             continue
         if deadline is not None and now() >= deadline:
             break
+        if max_groups is not None and visited >= max_groups:
+            break
         if cancel and _exists(cancel):
             aborted, reason = True, 'Đã hủy'
             break
         result = run_group_with_retry(path, run_id, group['id'], max_attempts=max_attempts, deadline=deadline,
-                                      cancel=cancel, sleep=sleep, now=now)
+                                      cancel=cancel, sleep=sleep, now=now, max_slice_attempts=max_slice_attempts)
+        visited+=1
         if progress:
             progress({'index': index, 'total': len(run['groups']), **result})
         if result['status'] == 'completed':

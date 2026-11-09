@@ -62,7 +62,7 @@ def _shape(region, gray):
     return shape or rect_shape(region['safe'])
 
 
-def assess(path, run_id=None, font_path=None):
+def assess(path, run_id=None, font_path=None, page_ids=None):
     """Estimate lettering size for every translated segment of the run.
 
     Returns {'items': [...], 'candidates': [...]}; each candidate has a character budget.
@@ -75,6 +75,8 @@ def assess(path, run_id=None, font_path=None):
     fm = FontMeasure(font_path or default_font())
     items, candidates = [], []
     for page in state['pages']:
+        if page_ids is not None and page['page_id'] not in page_ids:
+            continue
         try:
             manifest, regions, gray = _regions_and_gray(page)
         except (OSError, ValueError):
@@ -135,12 +137,15 @@ def acceptable(old, new, source, budget):
     return sorted(PLACEHOLDER.findall(source)) == sorted(PLACEHOLDER.findall(new))
 
 
-def auto_shorten(path, run_id=None, font_path=None, *, rounds=2, cancel=None, budget_seconds=None, now=time.monotonic):
+def auto_shorten(path, run_id=None, font_path=None, *, rounds=2, cancel=None, budget_seconds=None, now=time.monotonic, page_ids=None, max_pages_per_call=None):
     """Shorten cramped lines; returns a report. Safe to call again (idempotent)."""
     report = {'rounds': 0, 'candidates': 0, 'shortened': [], 'rejected': [], 'errors': [], 'done': True}
+    if max_pages_per_call is not None and (type(max_pages_per_call) is not int or max_pages_per_call<1):
+        raise ValueError('Giới hạn trang rút gọn không hợp lệ')
+    processed_pages=0
     deadline = now() + budget_seconds if budget_seconds else None
     for _ in range(rounds):
-        info = assess(path, run_id, font_path)
+        info = assess(path, run_id, font_path, page_ids)
         todo = info['candidates']
         if not todo:
             break
@@ -152,13 +157,17 @@ def auto_shorten(path, run_id=None, font_path=None, *, rounds=2, cancel=None, bu
         by_page = {}
         for c in todo:
             by_page.setdefault(c['page_id'], []).append(c)
-        accepted = {}
+        accepted = {};attempted=set()
         for page_id, group in by_page.items():
             if cancel and Path(cancel).exists():
                 raise ValueError('Đã hủy')
             if deadline is not None and now() >= deadline:
                 report['done'] = False          # call again to continue; finished pages are idempotent
                 break
+            if max_pages_per_call is not None and processed_pages>=max_pages_per_call:
+                report['done'] = False
+                break
+            processed_pages+=1;attempted.update(c['segment_id'] for c in group)
             payload = {'items': [{'id': c['segment_id'], 'jp': c['jp'], 'vi': c['vi'], 'max_chars': c['budget']} for c in group]}
             try:
                 raw, _meta = service.call_provider(profile, SYSTEM, payload)
@@ -178,7 +187,7 @@ def auto_shorten(path, run_id=None, font_path=None, *, rounds=2, cancel=None, bu
         segments = {s['id']: s for p in state['pages'] for s in p['segments']}
         for g in run['groups']:
             for row in g['results']:
-                if row['id'] in accepted or any(c['segment_id'] == row['id'] for c in todo):
+                if row['id'] in attempted:
                     row['auto_shorten_attempts'] = row.get('auto_shorten_attempts', 0) + 1
                 if (row['id'] in accepted and row.get('status') != 'human_approved'
                         and row.get('semantic_translation') == original[row['id']]

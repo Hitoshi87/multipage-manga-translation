@@ -78,6 +78,8 @@ def dispatch(request):
             return service.ocr_suggest_batch(request['project'], request['segment_ids'], request.get('cancel'))
         if action == 'auto_ocr_page':
             return service.auto_ocr_page(request['project'],request['page_id'],request.get('cancel'))
+        if action == 'visual_ocr_page':
+            return service.visual_ocr_page(request['project'],request['page_id'],request.get('cancel'))
         if action == 'verify_page':
             return service.verify_page(request['manifest'], request['snapshot'])
         if action == 'prepare':
@@ -102,7 +104,9 @@ def dispatch(request):
         if action == 'autopilot':
             from .translation import autopilot
             return autopilot.autopilot(request['project'], request.get('run_id'), max_attempts=int(request.get('max_attempts',3)),
-                budget_seconds=request.get('budget_seconds'), auto_exclude=request.get('auto_exclude') is not False, cancel=request.get('cancel'))
+                budget_seconds=request.get('budget_seconds'), auto_exclude=request.get('auto_exclude') is not False, cancel=request.get('cancel'),
+                max_page_ordinal=request.get('max_page_ordinal'), max_groups=request.get('max_groups'),
+                max_slice_attempts=request.get('max_slice_attempts'))
         if action == 'review_queue':
             from .report import review_queue
             return review_queue(request['project'], request['log'], request.get('state'))
@@ -140,7 +144,8 @@ def dispatch(request):
         if action == 'auto_shorten':
             from .translation import shorten
             return shorten.auto_shorten(request['project'], request.get('run_id'), request.get('font_path'),
-                budget_seconds=request.get('budget_seconds'), cancel=request.get('cancel'))
+                budget_seconds=request.get('budget_seconds'), cancel=request.get('cancel'), page_ids=request.get('page_ids'),
+                max_pages_per_call=request.get('max_pages_per_call'))
         if action == 'estimate':
             from .translation import autopilot
             return autopilot.estimate(request['project'], request.get('run_id'))
@@ -153,6 +158,8 @@ def dispatch(request):
             return service.review_group(request['project'], request['run_id'], request['group_id'], request.get('cancel'))
         if action == 'repair_quote':
             return service.repair_quote_group(request['project'],request['run_id'],request['group_id'],request.get('cancel'))
+        if action == 'repair_slip':
+            return service.repair_slip_group(request['project'],request['run_id'],request['group_id'],request.get('cancel'))
         if action == 'accept':
             return service.accept(request['project'], request['run_id'], request['edits'])
         if action == 'approve_lettering':
@@ -160,7 +167,7 @@ def dispatch(request):
         if action == 'mapping':
             return service.export_mapping(request['project'], request['run_id'])
         if action == 'draft_mapping':
-            return service.export_mapping(request['project'], request['run_id'], draft=True)
+            return service.export_mapping(request['project'], request['run_id'], draft=True, page_ids=request.get('page_ids'))
         raise ValueError('Thao tác dịch không được hỗ trợ: ' + action)
     if operation == "doctor":
         return doctor()

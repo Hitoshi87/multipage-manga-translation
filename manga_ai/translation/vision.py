@@ -7,6 +7,7 @@ from ..runtime.resources import sha256_file
 MAX_PAGES = 4
 MAX_DIMENSION = 1800
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_DETAIL_CROPS = 8
 
 
 def image_plan(state, group, mode):
@@ -42,13 +43,43 @@ def public_plan(plan):
     return [{k:v for k,v in item.items() if k != 'image_path'} for item in plan]
 
 
+def focused_plan(state, targets):
+    """One enlarged, separately mapped image per target; bounded per request."""
+    if not 1 <= len(targets) <= MAX_DETAIL_CROPS:
+        raise ValueError('Cần 1–8 vùng ảnh cận')
+    result=[]
+    for index,target in enumerate(targets):
+        item=image_plan(state,{'targets':[target]},'target_crop')[0]
+        item['mode']='detail_sheet'
+        item['cells']=[{'label':str(index+1),'target_id':target['id'],'crop_xyxy':item['crop_xyxy']}]
+        result.append(item)
+    return result
+
+
 def image_parts(plan):
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
     parts=[]
     for item in plan:
         if sha256_file(item['image_path'])!=item['image_sha256']:raise ValueError('Ảnh nguồn đã thay đổi')
         with Image.open(item['image_path']) as image:
-            crop=image.convert('RGB').crop(tuple(item['crop_xyxy']))
+            if item['mode']=='detail_sheet':
+                cells=item['cells'];cell_w,cell_h=600,400;columns=1 if len(cells)==1 else 2
+                crop=Image.new('RGB',(cell_w*columns,cell_h*((len(cells)+columns-1)//columns)),'white')
+                draw=ImageDraw.Draw(crop)
+                try:font=ImageFont.load_default(size=26)
+                except TypeError:font=ImageFont.load_default()
+                for index,cell in enumerate(cells):
+                    x=(index%columns)*cell_w;y=(index//columns)*cell_h
+                    detail=image.crop(tuple(cell['crop_xyxy'])).convert('RGB')
+                    detail.thumbnail((cell_w-20,cell_h-45),Image.Resampling.LANCZOS)
+                    # Enlarge small text for visual inspection; this does not
+                    # add source detail and is never treated as verified OCR.
+                    scale=min((cell_w-20)/detail.width,(cell_h-45)/detail.height,3)
+                    if scale>1:detail=detail.resize((max(1,round(detail.width*scale)),max(1,round(detail.height*scale))),Image.Resampling.LANCZOS)
+                    crop.paste(detail,(x+(cell_w-detail.width)//2,y+35))
+                    draw.text((x+10,y+4),cell['label'],font=font,fill='black')
+            else:
+                crop=image.crop(tuple(item['crop_xyxy'])).convert('RGB')
             crop.thumbnail((MAX_DIMENSION,MAX_DIMENSION),Image.Resampling.LANCZOS)
             stream=io.BytesIO();crop.save(stream,format='PNG',optimize=True)
         data=stream.getvalue()

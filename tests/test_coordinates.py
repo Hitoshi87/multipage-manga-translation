@@ -28,6 +28,14 @@ class ResolutionTests(unittest.TestCase):
         narrow={'box':[410,130,35,80],'name':'narrow'};lower={'box':[530,750,70,100],'name':'lower'}
         self.assertEqual([r['name'] for r in reading_order([lower,narrow],True,panels)],['narrow','lower'])
 
+    def test_missing_panel_does_not_send_opening_dialogue_to_end(self):
+        panels=[[256,655,656,644],[108,338,804,284]]
+        def bubble(name,box):return {'name':name,'box':box,'detector':'ai_balloon','auto_clean':True}
+        opening=bubble('opening',[262,34,178,243]);right=bubble('right',[695,352,190,231])
+        left=bubble('left',[135,357,206,248]);lower=bubble('lower',[695,658,214,271])
+        self.assertEqual([r['name'] for r in reading_order([right,left,lower,opening],True,panels)],
+                         ['opening','right','left','lower'])
+
     def test_only_large_ai_inputs_are_normalized(self):
         rgb=np.zeros((4320,3024,3),np.uint8)
         self.assertEqual(analysis_image(rgb,'ai').shape,(1440,1008,3))

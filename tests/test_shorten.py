@@ -51,6 +51,17 @@ class ShortenTests(unittest.TestCase):
         self.assertEqual([c['region_id'] for c in info['candidates']], ['B001'])
         self.assertLess(info['candidates'][0]['budget'], len(LONG))
 
+    def test_slice_only_counts_pages_actually_attempted(self):
+        rows=[{'segment_id':self.seg['B001'],'page_id':'p1','jp':'とても長い文章です','vi':LONG,'budget':45},
+              {'segment_id':self.seg['B003'],'page_id':'p2','jp':'そうですね','vi':'Đúng vậy','budget':20}]
+        answer=lambda profile,prompt,payload:(json.dumps({'items':[{'id':x['id'],'vi':SHORT} for x in payload['items']]}),{})
+        with patch.object(shorten,'assess',return_value={'candidates':rows}),patch.object(service,'call_provider',side_effect=answer):
+            report=shorten.auto_shorten(self.project,rounds=1,max_pages_per_call=1)
+        self.assertFalse(report['done'])
+        state=service.load(self.project);saved={r['id']:r for g in state['runs'][-1]['groups'] for r in g['results']}
+        self.assertEqual(saved[self.seg['B001']]['auto_shorten_attempts'],1)
+        self.assertNotIn('auto_shorten_attempts',saved[self.seg['B003']])
+
     def test_a_shorter_rewrite_is_a_proposal_until_manually_approved(self):
         def provider(profile, prompt, payload):
             return json.dumps({'items': [{'id': payload['items'][0]['id'], 'vi': SHORT}]}), {}
