@@ -1,5 +1,5 @@
 import unittest
-from manga_ai.translation.grouping import build_groups,input_chars,payload_for_group
+from manga_ai.translation.grouping import build_groups,input_chars,payload_for_group,prior_readings
 from manga_ai.translation.service import digest, _quote_consistency, same_source
 
 
@@ -87,3 +87,13 @@ class GroupingTest(unittest.TestCase):
         rows=[{'id':'1','vi':'Ờ, các iem...','flags':[]},{'id':'2','vi':'“Các iem” là gì?','flags':[]}]
         _quote_consistency(rows,link)
         self.assertTrue(all(not r['flags'] for r in rows))
+
+    def test_prior_readings_carries_past_furigana_without_future_leakage(self):
+        g1={'id':'g1','targets':[{'id':'s1','jp':'久人さん','ruby':[{'base':'久人','reading':'かずと','status':'verified'}]}],
+            'context':[],'results':[{'id':'s1','source_evidence':{'furigana':[{'base':'味沢','reading':'あいざわ'}]}}]}
+        g2={'id':'g2','targets':[{'id':'s2','jp':'久人の料理と味沢の言葉'}],'context':[],'results':[]}
+        g3={'id':'g3','targets':[{'id':'s3','jp':'船木さん','ruby':[{'base':'船木','reading':'ふなき','status':'verified'}]}],'context':[],'results':[]}
+        run={'groups':[g1,g2,g3]}
+        readings=prior_readings(run,g2)
+        self.assertEqual([(r['base'],r['reading']) for r in readings],[('久人','かずと'),('味沢','あいざわ')])
+        self.assertEqual(prior_readings(run,g1),[])

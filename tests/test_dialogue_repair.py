@@ -21,6 +21,13 @@ class DialogueRepairTest(unittest.TestCase):
         mask=_local_glyph_mask(rgb,region,evidence,boxes)
         self.assertIsNotNone(mask);self.assertTrue(mask[50,50]);self.assertEqual(int(mask[:20].sum()+mask[:, :20].sum()),0)
         self.assertIsNone(_local_glyph_mask(rgb,region,evidence,[]))
+        # A glyph mostly inside `interior` whose edge touches the 7x7 erosion band is still fully covered.
+        rgb2=np.full((120,120,3),255,np.uint8);rgb2[45:58,82:95]=0
+        ev2=np.zeros((120,120),np.uint8);ev2[45:58,82:95]=1
+        b2=[{'box':[78,40,20,22],'kind':'in_bubble','confidence':.83}]
+        m2=_local_glyph_mask(rgb2,region,ev2,b2)
+        self.assertIsNotNone(m2);self.assertTrue(np.all(m2[45:58,82:95]>0));self.assertEqual(int(m2[:,98:].sum()),0)
+        self.assertIsNone(_local_glyph_mask(rgb2,region,ev2,[{'box':[78,40,20,22],'kind':'in_bubble','confidence':.75}]))
     def test_split_offset_vertical_lobes_only_at_ink_free_band(self):
         rgb=np.full((220,220,3),255,np.uint8);rgb[45:75,125:145]=0;rgb[140:170,65:85]=0
         parent={'box':[20,20,180,180],'interior':np.ones((180,180),np.uint8)*255,'detector':'ai_balloon'}

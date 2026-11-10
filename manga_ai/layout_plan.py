@@ -12,11 +12,35 @@ SMOOTHING = (.97, .94, .91, .88, .85, .82, .79, .76, .73, .70, .67, .64, .61, .5
 _OPEN = re.compile('[“‘(]')
 _CLOSE = re.compile('[”’)]')
 _OPEN_END = re.compile('[“‘(]$')
+_HYPHEN_SPLIT = re.compile(
+    r'^([^\s\u2013\u2014-]*[A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,}[\u2013\u2014-])([A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,}[^\s\u2013\u2014-]*)$'
+    r'|^([^\s\u2013\u2014-]*[A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,})([\u2013\u2014-]{2,}[.!?\u2026\u201d\u2019)]*)$'
+)
+
+
+def _tokenize_paragraph(p):
+    raw = p.strip().split() or ['']
+    tokens, glue = [], []
+    for w in raw:
+        m = _HYPHEN_SPLIT.match(w)
+        if m:
+            tokens.append(m.group(1) or m.group(3))
+            glue.append(True)
+            tokens.append(m.group(2) or m.group(4))
+            glue.append(False)
+        else:
+            tokens.append(w)
+            glue.append(False)
+    return tokens, glue
 
 
 def wrap_scored(paragraphs, widths, measure):
     """Line breaking with a readability cost; returns (cost, lines) or None."""
-    words = [p.strip().split() or [''] for p in paragraphs]
+    words, glues = [], []
+    for p in paragraphs:
+        ws, gs = _tokenize_paragraph(p)
+        words.append(ws)
+        glues.append(gs)
     opened = []
     for ws in words:
         depth = 0
@@ -38,7 +62,8 @@ def wrap_scored(paragraphs, widths, measure):
         best = None
         content = ''
         for end in range(start, len(words[par])):
-            content += (' ' if end > start else '') + words[par][end]
+            sep = '' if (end == start or glues[par][end - 1]) else ' '
+            content += sep + words[par][end]
             width = measure(content)
             if width > widths[row]:
                 break
@@ -50,6 +75,8 @@ def wrap_scored(paragraphs, widths, measure):
             raw = words[par][end]
             last = raw.lower().rstrip('.,!?;:…')
             if not nxt:
+                if glues[par][end]:
+                    cost += .25
                 if last in FUNCTION_WORDS:
                     cost += .35
                 if _OPEN_END.search(raw):

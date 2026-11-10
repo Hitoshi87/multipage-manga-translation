@@ -48,6 +48,29 @@ def doctor():
 
 
 def dispatch(request):
+    # An orphaned worker can outlive a crashed Photoshop process. Serialize
+    # all project requests until it finishes, including reads of its state.
+    scope = request.get('worker_scope')
+    if scope:
+        from .project_lock import project_lock
+        # Resolve the project before appending the suffix so aliases and a
+        # symlink to the same project do not create separate worker locks.
+        canonical_scope = Path(scope).expanduser().resolve()
+        with project_lock(str(canonical_scope) + '.workers', request.get('cancel')):
+            return _dispatch_with_project_lock(request)
+    return _dispatch_with_project_lock(request)
+
+
+def _dispatch_with_project_lock(request):
+    project = request.get('project')
+    if project and str(request.get('operation', '')).startswith('translation_'):
+        from .project_lock import project_lock
+        with project_lock(project, request.get('cancel')):
+            return _dispatch(request)
+    return _dispatch(request)
+
+
+def _dispatch(request):
     if request.get("accel"):
         os.environ["MANGA_ACCEL"] = str(request["accel"]).lower()
     operation = request.get("operation")
@@ -106,7 +129,7 @@ def dispatch(request):
             return autopilot.autopilot(request['project'], request.get('run_id'), max_attempts=int(request.get('max_attempts',3)),
                 budget_seconds=request.get('budget_seconds'), auto_exclude=request.get('auto_exclude') is not False, cancel=request.get('cancel'),
                 max_page_ordinal=request.get('max_page_ordinal'), max_groups=request.get('max_groups'),
-                max_slice_attempts=request.get('max_slice_attempts'))
+                max_slice_attempts=request.get('max_slice_attempts'), retry_parked=request.get('retry_parked') is True)
         if action == 'review_queue':
             from .report import review_queue
             return review_queue(request['project'], request['log'], request.get('state'))
@@ -200,6 +223,9 @@ def dispatch(request):
         from .engine import analyse
         return analyse(request["input"], request["out"], request.get("lang", "eng"),
                        request.get("rtl", True), int(request.get("psm", 11)), request.get("cancel"), request.get('detector', 'opencv'), request.get('layout','opencv'), request.get('detail','standard'))
+    if operation == 'inspect_input_memory':
+        from .input_memory import inspect_inputs
+        return {'items': inspect_inputs(request['paths'], int(request.get('requested_channels', 0)))}
     if operation == 'list_engines':
         from .engines import list_engines
         return list_engines()

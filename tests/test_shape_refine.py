@@ -122,6 +122,15 @@ class ShapeRefineTests(unittest.TestCase):
         self.assertEqual(result['refined_shapes'], {})
         self.assertIn('shape_refine_error', result)
 
+    def test_asymmetric_spiky_balloon_stays_balanced_around_safe(self):
+        gray = page(lambda g: None)
+        box = balloon(gray)
+        safe = [210, 90, 140, 220]
+        refined = refine_shape(gray, {'box': box, 'safe': safe}, mask_rows(box))
+        self.assertIsNotNone(refined)
+        mid = next(r for r in refined['rows'] if r[0] == 200)
+        self.assertLess(abs((mid[1] + mid[2]) / 2 - (safe[0] + safe[2] / 2)), 8)
+
 
 if __name__ == '__main__':
     unittest.main()

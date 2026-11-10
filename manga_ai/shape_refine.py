@@ -68,13 +68,22 @@ def _refine_shape(gray, region, mask_shape, brightness, inset_override=None):
     border = np.concatenate([comp[0, :], comp[-1, :], comp[:, 0], comp[:, -1]])
     if int(border.sum()) > 2:
         return None
-    contours, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    filled = np.zeros_like(comp)
-    cv2.drawContours(filled, contours, -1, 1, -1)            # fill the holes left by old text remnants
+    # Fill bounded interior holes left by old text remnants without bridging over exterior dark strokes.
+    inv = (comp == 0).astype(np.uint8)
+    nh, hlabels, hstats, _ = cv2.connectedComponentsWithStats(inv, 8)
+    filled = comp.copy()
+    max_hole = max(250, int(comp.sum() * .08))
+    for hlbl in range(1, nh):
+        hc = hlabels == hlbl
+        if np.any(hc[0, :]) or np.any(hc[-1, :]) or np.any(hc[:, 0]) or np.any(hc[:, -1]):
+            continue
+        if hstats[hlbl, cv2.CC_STAT_AREA] <= max_hole:
+            filled[hc] = 1
     share = filled.sum() / float(w * h)
     if not .35 <= share <= .95:
         return None
-    inset = inset_override if inset_override is not None else max(5, min(12, round(min(w, h) * .045)))
+    scale = max(1.0, min(w, h) / 180.0)
+    inset = inset_override if inset_override is not None else max(5, min(round(12 * scale), round(min(w, h) * .045)))
     inner = cv2.erode(filled, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * inset + 1, 2 * inset + 1)))
     rows = []
     for row in range(inner.shape[0]):
@@ -91,6 +100,27 @@ def _refine_shape(gray, region, mask_shape, brightness, inset_override=None):
             rows.append([y0 + row, x0 + left, x0 + right + 1])
     if len(rows) < 12:
         return None
+    safe = region.get('safe')
+    if safe and len(safe) == 4:
+        sx, sy, sw, sh = safe
+        core_rows = [r for r in rows if sy <= r[0] < sy + sh] or rows
+        left_exts = [max(0, sx - r[1]) for r in core_rows]
+        right_exts = [max(0, r[2] - (sx + sw)) for r in core_rows]
+        ext_l, ext_r = float(np.median(left_exts)), float(np.median(right_exts))
+        max_l, max_r = max(left_exts), max(right_exts)
+        if abs(ext_l - ext_r) > inset * .5 or max_l - ext_l > inset * .5 or max_r - ext_r > inset * .5:
+            cap_x = round(min(ext_l, ext_r) + inset * .5)
+            min_x, max_x = sx - cap_x, sx + sw + cap_x
+            trimmed_x = [[r[0], max(min_x, r[1]), min(max_x, r[2])] for r in rows if min(max_x, r[2]) - max(min_x, r[1]) >= 12]
+            if len(trimmed_x) >= 12:
+                rows = trimmed_x
+        ext_t, ext_b = max(0, sy - rows[0][0]), max(0, rows[-1][0] - (sy + sh))
+        if abs(ext_b - ext_t) > inset * 2:
+            cap_y = round(min(ext_t, ext_b) + inset)
+            min_y, max_y = sy - cap_y, sy + sh + cap_y
+            trimmed_y = [r for r in rows if min_y <= r[0] <= max_y]
+            if len(trimmed_y) >= 12:
+                rows = trimmed_y
     if mask_shape and mask_shape.get('rows'):
         ratio = _rows_area(rows) / max(1, _rows_area(mask_shape['rows']))
         if not .7 <= ratio <= 2.0:

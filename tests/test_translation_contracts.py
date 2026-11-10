@@ -12,6 +12,15 @@ class TranslationContractTests(unittest.TestCase):
         self.assertEqual(validate_response(json.dumps(good), targets)[0]['id'], 'a')
         for rows in ([], good['translations'] * 2, [{'id': 'context', 'vi': 'Chào {name}', 'flags': []}], [{'id': 'a', 'vi': 'Chào', 'flags': []}]):
             with self.assertRaises(ValueError): validate_response(json.dumps({'translations': rows}), targets)
+        # Recoverable model quirks: missing flags, unknown flag string, extra key, null evidence, silent ellipsis
+        quirky = {'translations': [{'id': 'a', 'vi': 'Chào {name}', 'flags': ['uncertain', ''], 'notes': 'ok', 'source_evidence': None}]}
+        norm = validate_response('```json\n' + json.dumps(quirky) + '\n```', targets)[0]
+        self.assertEqual(norm['flags'], ['needs_review'])
+        self.assertNotIn('notes', norm)
+        self.assertNotIn('source_evidence', norm)
+        silent = validate_response(json.dumps({'translations': [{'id': 's', 'vi': '   '}]}), [{'id': 's', 'jp': '・・・・・・'}])[0]
+        self.assertEqual(silent['vi'], '…')
+        self.assertEqual(silent['flags'], [])
     def test_unknown_source_is_blocked(self):
         row = normalize({'regions': [{'id':'B001', 'source':'[OCR chưa đọc được]'}]}, 'page1')[0]
         self.assertIsNone(row['jp'])

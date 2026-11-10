@@ -525,7 +525,7 @@ def resume_or_prepare(path):
 
 
 def run_group(path, run_id, group_id, cancel=None):
-    from .grouping import payload_for_group
+    from .grouping import payload_for_group, prior_readings
     state = load(path)
     run = next((r for r in state['runs'] if r['id']==run_id),None)
     if not run: raise ValueError('Không tìm thấy run')
@@ -552,6 +552,11 @@ def run_group(path, run_id, group_id, cancel=None):
         if len(run['compiled_system'])+len(json.dumps(payload,ensure_ascii=False))>int(profile.get('max_input_chars',24000)):
             raise ValueError('Payload vision vượt giới hạn ký tự; giảm nhóm')
         call_profile={**profile,'_vision_images':image_parts(plan)}
+    readings=prior_readings(run,group)
+    if readings:
+        trial_payload={**payload,'prior_readings':readings}
+        if len(run['compiled_system'])+len(json.dumps(trial_payload,ensure_ascii=False))<=int(profile.get('max_input_chars',24000)):
+            payload=trial_payload
     meta = None
     try:
         raw, meta = call_provider(call_profile, run['compiled_system'], payload)

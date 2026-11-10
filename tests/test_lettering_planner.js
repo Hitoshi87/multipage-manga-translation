@@ -90,6 +90,10 @@ console.log('Page size cap PASS');
   assert(!lines.some(l=>l==='yêu'||l==='…và'||l==='đi.'),'stranded word: '+lines.join(' | '));
   const scored=ctx.MTA.wrapScored(['một hai ba bốn'],[9,9],s=>s.length);
   assert(scored&&Array.from(scored.lines).join('|')==='một hai|ba bốn');
+  const hyph=ctx.MTA.wrapScored(['Aizawa-san!'],[7,7],s=>s.length);
+  assert(hyph&&Array.from(hyph.lines).join('|')==='Aizawa-|san!');
+  const whole=ctx.MTA.wrapScored(['Aizawa-san!'],[15],s=>s.length);
+  assert(whole&&Array.from(whole.lines).join('|')==='Aizawa-san!');
   console.log('Readable breaks PASS ->',lines.join(' | '),'size',plan.size.toFixed(1));
 }
 // Vertical centring: a balloon with a long pointed tail must not pull the text off the body's centre.

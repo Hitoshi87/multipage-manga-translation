@@ -75,7 +75,7 @@ def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=Non
 
 def autopilot(path, run_id=None, *, max_attempts=3, budget_seconds=None, max_consecutive=5, auto_exclude=True,
               cancel=None, progress=None, sleep=time.sleep, now=time.monotonic, max_page_ordinal=None,
-              max_groups=None, max_slice_attempts=None):
+              max_groups=None, max_slice_attempts=None, retry_parked=False):
     """Translate every pending group of the latest (or given) run.
 
     Returns a report; `done` is True when nothing is left to do (all groups
@@ -99,6 +99,16 @@ def autopilot(path, run_id=None, *, max_attempts=3, budget_seconds=None, max_con
     run = next((r for r in state['runs'] if r['id'] == run_id), None)
     if not run:
         raise ValueError('Không tìm thấy run')
+    if retry_parked:
+        unparked = False
+        for group in run['groups']:
+            if group['status'] != 'completed' and _failed_attempts(group) >= max_attempts and classify_error(_last_error(group)) == 'transient':
+                group.setdefault('prior_attempts', []).extend(group.get('attempts', []))
+                group['attempts'] = []
+                group['status'] = 'pending'
+                unparked = True
+        if unparked:
+            service.save(path, state)
     failed, consecutive, aborted, reason = [], 0, False, ''
     visited=0
     for index, group in enumerate(run['groups'], 1):

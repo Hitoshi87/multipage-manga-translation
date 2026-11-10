@@ -36,6 +36,38 @@ def payload_for_group(group):
     return result
 
 
+def prior_readings(run, group):
+    """Collect furigana readings from earlier groups in reading order that match kanji in this group."""
+    if not run or not group:
+        return []
+    group_text = '\n'.join(
+        str(t.get('jp') or '') + '\n' + str((t.get('visual_ocr') or {}).get('main_text') or '')
+        for t in group.get('targets', []) + group.get('context', [])
+    )
+    if not group_text.strip():
+        return []
+    seen = {}
+    for prev in run.get('groups', []):
+        if prev.get('id') == group.get('id'):
+            break
+        for t in prev.get('targets', []):
+            for entry in (t.get('ruby') or []):
+                base, reading = entry.get('base'), entry.get('reading')
+                if base and reading and base in group_text:
+                    seen[(base, reading)] = {'base': base, 'reading': reading, 'status': entry.get('status', 'proposed'), 'source_id': t.get('id')}
+            for entry in ((t.get('visual_ocr') or {}).get('furigana') or []):
+                base, reading = entry.get('base'), entry.get('reading')
+                if base and reading and base in group_text and (base, reading) not in seen:
+                    seen[(base, reading)] = {'base': base, 'reading': reading, 'status': 'proposed', 'source_id': t.get('id')}
+        for r in (prev.get('results') or []):
+            ev = r.get('source_evidence') or {}
+            for entry in (ev.get('furigana') or []):
+                base, reading = entry.get('base'), entry.get('reading')
+                if base and reading and base in group_text and (base, reading) not in seen:
+                    seen[(base, reading)] = {'base': base, 'reading': reading, 'status': 'proposed', 'source_id': r.get('id')}
+    return list(seen.values())[:24]
+
+
 def input_chars(system, group):
     return len(system)+len(json.dumps(payload_for_group(group),ensure_ascii=False))
 

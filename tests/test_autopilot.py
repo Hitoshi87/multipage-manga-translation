@@ -148,6 +148,11 @@ class AutopilotTests(unittest.TestCase):
             again = autopilot.autopilot(self.project, run_id=report['run_id'], auto_exclude=False, max_attempts=2)
             provider2.assert_not_called()                 # parked groups are not retried forever
         self.assertEqual(len(again['parked']), 1)
+        with patch.object(service, 'call_provider', side_effect=self.ok) as provider3:
+            resumed = autopilot.autopilot(self.project, run_id=report['run_id'], auto_exclude=False, max_attempts=2, retry_parked=True)
+            self.assertEqual(provider3.call_count, 1)
+        self.assertEqual(resumed['completed'], 3)
+        self.assertEqual(resumed['parked'], [])
 
     def test_systemic_error_stops_the_run_at_once(self):
         with patch.object(service, 'call_provider', side_effect=ValueError('Chưa có API key trong biến môi trường X')) as provider:

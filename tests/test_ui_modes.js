@@ -154,15 +154,16 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     const files=['1.png','2.png'].map(name=>({name})),written={},calls=[];let pages=[],failNumeric=false,staleWorker=false;
     function File(path){this.fsName=path;this.name=path.split('/').pop();this.parent={fsName:'/tmp'};this.exists=true;}
     files.forEach(f=>Object.setPrototypeOf(f,File.prototype));
-    const volumeCtx={File,MJSON:JSON,cancelled:false,volumeProgress:'',inputFolder:null,outputFolder:{fsName:'/out'},
+    const volumeCtx={File,MJSON:JSON,cancelled:false,volumeProgress:'',activeWorkerScope:null,inputFolder:null,outputFolder:{fsName:'/out'},
       lang:{selection:{text:'jpn_vert'}},savePsd:{value:false},savePdf:{value:true},docs:[],root:{fsName:'/tmp'},
       magiOrder:{value:true},koharuOrder:{value:false},
       selectedEngine:()=>({id:'baseline'}),tick:()=>true,
       app:{open:f=>({name:f.name,width:{as:()=>10},height:{as:()=>10},close(){}})},SaveOptions:{DONOTSAVECHANGES:0},
-      MTA:{sourceNameAllowed:()=>true,mkdir:()=>({fsName:'/tmp'}),unique:()=>1,snapshot:()=>({fsName:'/tmp/snapshot.png'}),read:()=>JSON.stringify({regions:[],layout_model:'opencv'}),write:(f,s)=>{written[f.fsName]=JSON.parse(s);},validateManifest(){}},
+      MTA:{sourceNameAllowed:()=>true,mkdir:()=>({fsName:'/tmp'}),unique:()=>1,snapshot:()=>({fsName:'/tmp/snapshot.png'}),read:()=>JSON.stringify({regions:[],layout_model:'opencv'}),write:(f,s)=>{written[f.fsName]=JSON.parse(s);},writeCheckpoint:(f,s)=>{written[f.fsName]=JSON.parse(s);},validateManifest(){}},
       detect(doc){if(doc.name==='1.png')throw Error('Không đọc được trang');return {manifestPath:'/tmp/manifest.json'};},
       build(s){s.cleanResult={skipped:[],applied:[]};s.savedFiles={pdf:'/out/2.pdf'};},
       rpc(req){
+        assert.strictEqual(volumeCtx.activeWorkerScope,'/out/project.json','scan and translation RPCs share the project worker scope');
         calls.push(req.operation);
         if(req.operation==='translation_load')return {pages,runs:[{id:'run1',groups:[],blocked_ids:[]}]};
         if(req.operation==='translation_autopilot')return {run_id:'run1',done:true,parked:[]};
@@ -181,6 +182,7 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     assert.deepStrictEqual(Array.from(result.log,x=>x.status),['failed','draft'],'scan failure does not prevent another page from exporting');
     assert.match(result.log[0].error,/Không đọc được trang/);
     assert.strictEqual(written['/out/draft_run1.json'].pages.length,2,'failure and exported page are checkpointed');
+    assert.strictEqual(volumeCtx.activeWorkerScope,null,'worker scope is restored after the run');
     pages=[{page_id:'2.png',ordinal:2,manifest:'/tmp/old.json',segments:[{id:'s',source_status:'unreviewed'}]}];calls.length=0;
     vm.runInContext(source.slice(source.indexOf('        function canRefreshPageLayout('),source.indexOf('        function runVolume(')),volumeCtx);
     volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
@@ -192,14 +194,46 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     assert(degraded.log.some(p=>p.status==='draft'),'vision OCR failure does not block ordinary translation and export');
     calls.length=0;staleWorker=true;
     assert.throws(()=>volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{vision_mode:'target_crop'},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false}),/worker không có tín hiệu/);
+    assert.strictEqual(volumeCtx.activeWorkerScope,null,'worker scope is restored after an error');
     assert(!calls.includes('translation_autopilot'),'do not start a second worker while the timed-out one may still be alive');
+    volumeCtx.detect=()=>({manifestPath:'/tmp/manifest.json'});
+    volumeCtx.rpc=req=>{
+      if(req.operation==='translation_load')return {pages:[],runs:[{id:'run1',groups:[],blocked_ids:[]}]};
+      if(req.operation==='translation_autopilot')return {run_id:'run1',done:true,parked:[]};
+      if(req.operation==='translation_auto_shorten')return {done:true,shortened:[]};
+      if(req.operation==='translation_draft_mapping')return {data:{pages:[{page_id:'1.png',manifest:'/tmp/manifest.json',mapping:[],review:[],required_count:0}]}};
+      return {};
+    };
+    const pressure=volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,pressureFile:'/pressure',openReport:false});
+    assert.strictEqual(pressure.memoryYield,true,'memory pressure yields after a page checkpoint');
+    assert.strictEqual(pressure.nextStart,1);
+    assert.deepStrictEqual(Array.from(pressure.log,p=>p.page),['1.png'],'later pages remain for the next attempt');
+    assert.strictEqual(written['/out/draft_run1.json'].pages[0].page,'1.png','checkpoint is written before yielding');
+    volumeCtx.detect=()=>{throw Error('scan failed')};
+    volumeCtx.MTA.write=()=>{throw Error('unsafe direct checkpoint write')};
+    const allFailed=volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
+    assert.deepStrictEqual(Array.from(allFailed.log,p=>p.status),['failed','failed']);
+    assert.strictEqual(written['/out/draft_run1.json'].pages.length,2,'all-failed scan batch uses the backed-up checkpoint');
+  }
+  {
+    const storedProfile={model:'old-model',vision_mode:'target_crop',series_name:'Original'},savedPages=[{status:'draft',engine:{id:'art_draft',version:'art-draft-0.1'}}];
+    const resumeCtx={MJSON:JSON,MTA:{read:()=>JSON.stringify({pages:savedPages})},latestDraftLog:()=>({fsName:'/out/draft.json'}),
+      rpc:()=>({runs:[{streaming:true,profile_revision:'frozen'}],profiles:[{revision:'frozen',values:storedProfile}]})};
+    vm.createContext(resumeCtx);
+    vm.runInContext(source.slice(source.indexOf('        function savedStreamingSettings('),source.indexOf('        function syncEasyFolder(')),resumeCtx);
+    const saved=resumeCtx.savedStreamingSettings({exists:true,fsName:'/out/project.json'},{fsName:'/out'});
+    assert.strictEqual(saved.profile,storedProfile,'resume keeps the frozen project profile');
+    assert.strictEqual(saved.engine.id,'art_draft','resume keeps the last exported clean engine');
+    assert.strictEqual(resumeCtx.savedStreamingSettings({exists:false},{}),null);
+    resumeCtx.rpc=()=>({runs:[{streaming:true,profile_revision:'missing'}],profiles:[]});
+    assert.throws(()=>resumeCtx.savedStreamingSettings({exists:true,fsName:'/out/project.json'},{}),/cấu hình gốc/);
   }
   {
     const all=Array.from({length:9},(_,i)=>({name:String(i+1)+'.png'}));
     function MockFile(path){this.fsName=path;this.exists=true;}
     all.forEach(f=>Object.setPrototypeOf(f,MockFile.prototype));
     const batches=[],cfg={folder:{getFiles:()=>all},output:{fsName:'/out'},project:'/out/p.json',profile:{},title:'test',note(){},engine:{id:'baseline'}};
-    const streamCtx={File:MockFile,MTA:{sourceNameAllowed:()=>true},latestDraftLog:()=>null,
+    const streamCtx={File:MockFile,savePdf:{value:true},savePsd:{value:false},MTA:{sourceNameAllowed:()=>true,validOutput:p=>!!p && !p.includes('broken')},latestDraftLog:()=>null,
       rpc(req){if(req.operation==='translation_load')return {runs:[],profiles:[{revision:'a'}]};return {};},
       runVolume(part){
         batches.push({indices:Array.from(part.indices),limit:part.streamLimit});
@@ -207,11 +241,16 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
         return {log:part.sharedLog,summary:{pages:part.sharedLog.length},html:null};
       }};
     vm.createContext(streamCtx);
-    vm.runInContext(source.slice(source.indexOf('        function runStreamingVolume('),source.indexOf('        // ---------- Rà soát nhanh')),streamCtx);
+    vm.runInContext(source.slice(source.indexOf('        function volumePageFinished('),source.indexOf('        // ---------- Rà soát nhanh')),streamCtx);
     const result=streamCtx.runStreamingVolume(cfg);
     assert.deepStrictEqual(batches.map(b=>b.indices),[[0,1,2,3],[4,5,6,7],[8]]);
     assert.deepStrictEqual(batches.map(b=>b.limit),[4,8,9]);
     assert.strictEqual(result.log.length,9,'all batch logs are accumulated');
+    assert.strictEqual(result.pendingPages.length,0,'no pages are falsely reported incomplete');
+    batches.length=0;
+    streamCtx.runStreamingVolume({...cfg,heavyPages:['3.png','7.png']});
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[0,1],[2],[3,4,5],[6],[7,8]],'large pages are isolated without skipping neighbors');
+    assert.deepStrictEqual(batches.map(b=>b.limit),[2,3,6,7,9]);
     const saved={run_id:'run1',pages:[0,1,2].map(i=>({page:all[i].name,status:'draft',mapped:1,required:1,files:{pdf:'/out/'+all[i].name+'.pdf'}}))};
     streamCtx.latestDraftLog=()=>({fsName:'/out/draft_run1.json'});
     streamCtx.MTA.read=()=>JSON.stringify(saved);streamCtx.MJSON=JSON;
@@ -220,6 +259,44 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     const resumed=streamCtx.runStreamingVolume(cfg);
     assert.deepStrictEqual(batches.map(b=>b.indices),[[3],[4,5,6,7],[8]],'resume skips existing exported pages');
     assert.strictEqual(resumed.log.length,9);
+    saved.pages[1].files.pdf='/out/broken.pdf';
+    batches.length=0;
+    streamCtx.runStreamingVolume(cfg);
+    assert.deepStrictEqual(batches[0].indices,[1,3],'a damaged output is processed again');
+    saved.pages[1].files.pdf='/out/good.pdf';
+    streamCtx.savePsd.value=true;
+    batches.length=0;
+    streamCtx.runStreamingVolume(cfg);
+    assert.deepStrictEqual(batches[0].indices,[0,1,2,3],'missing requested PSD is retried even when PDF exists');
+    streamCtx.savePsd.value=false;
+    streamCtx.latestDraftLog=()=>null;
+    streamCtx.rpc=req=>req.operation==='translation_load'?{runs:[],profiles:[{revision:'a'}]}:{};
+    batches.length=0;
+    const sliced=streamCtx.runStreamingVolume({...cfg,maxBatches:1,openFinalReport:false});
+    assert.strictEqual(sliced.recycle,true);
+    assert.strictEqual(sliced.nextStart,4);
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[0,1,2,3]]);
+    batches.length=0;
+    const nextSlice=streamCtx.runStreamingVolume({...cfg,maxBatches:1,startIndex:4,openFinalReport:false});
+    assert.strictEqual(nextSlice.nextStart,8);
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[4,5,6,7]]);
+    batches.length=0;
+    const smallSlice=streamCtx.runStreamingVolume({...cfg,maxBatches:1,startIndex:4,batchSize:1,openFinalReport:false});
+    assert.strictEqual(smallSlice.nextStart,5);
+    assert.deepStrictEqual(batches.map(b=>b.indices),[[4]],'after crash, retry one page without replaying the group');
+    streamCtx.runVolume=part=>({log:[{page:'1.png'}],failed:[],memoryYield:true,nextStart:1});
+    const pressured=streamCtx.runStreamingVolume({...cfg,maxBatches:1,pressureFile:'/pressure',openFinalReport:false});
+    assert.strictEqual(pressured.recycle,true);
+    assert.strictEqual(pressured.nextStart,1,'memory yield restarts at the next unfinished page');
+    const pending=streamCtx.volumePending(all,[
+      {page:'1.png',status:'failed',error:'disk error'},
+      {page:'2.png',status:'draft',mapped:1,required:2,files:{pdf:'/out/good.pdf'}},
+      {page:'3.png',status:'draft',mapped:1,required:1,files:{pdf:'/out/broken.pdf'}},
+      {page:'4.png',status:'draft',mapped:1,required:1,files:{pdf:'/out/good.pdf'}}
+    ]);
+    assert.deepStrictEqual(Array.from(pending.slice(0,4),p=>p.reason),['failed','mapping_incomplete','output_invalid','not_processed']);
+    assert.strictEqual(streamCtx.volumePageFinished({status:'draft',files:{pdf:'/out/good.pdf'}}),false,'missing mapping counts cannot mark a page finished');
+    assert.strictEqual(streamCtx.volumePageFinished({status:'draft',mapped:Infinity,required:Infinity,files:{pdf:'/out/good.pdf'}}),false,'non-finite mapping counts cannot mark a page finished');
   }
   assert(source.includes('Giữ layer (nặng, sửa lại được)')&&source.includes('Phẳng (nhẹ, chỉ xem hoặc in)'));
   // Export colour is an explicit choice (keep / RGB / CMYK), never a hard-set CMYK.

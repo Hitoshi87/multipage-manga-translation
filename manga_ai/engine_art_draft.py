@@ -17,10 +17,10 @@ def _local_glyph_mask(rgb,region,base,detections):
     gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY);height,width=gray.shape
     x,y,w,h=region['box'];polygon=outline_interior(region)
     if polygon is None or region.get('detector')!='ai_balloon':return None
-    interior=cv2.erode(polygon,np.ones((7,7),np.uint8))>0
+    interior=cv2.erode(polygon,np.ones((7,7),np.uint8),borderType=cv2.BORDER_CONSTANT,borderValue=0)>0
     mask=np.zeros((height,width),np.uint8);matched=0
     for d in detections:
-        if d.get('kind')!='in_bubble' or d.get('confidence',0)<.9:continue
+        if d.get('kind')!='in_bubble' or d.get('confidence',0)<.8:continue
         tx,ty,tw,th=d['box'];overlap=max(0,min(x+w,tx+tw)-max(x,tx))*max(0,min(y+h,ty+th)-max(y,ty))
         if overlap/max(1,tw*th)<.85:continue
         matched+=1;x0=max(0,tx-8);y0=max(0,ty-8);x1=min(width,tx+tw+8);y1=min(height,ty+th+8)
@@ -29,15 +29,22 @@ def _local_glyph_mask(rgb,region,base,detections):
         for i in range(1,n):
             xx,yy,ww,hh,area=stats[i]
             # Avoid large artwork components and clipped shapes.
-            if area<3 or area>1600 or ww>75 or hh>75 or xx==0 or yy==0 or xx+ww>=x1-x0 or yy+hh>=y1-y0:continue
+            if area<3 or area>1600 or (ww>75 and hh>24) or (hh>75 and ww>24) or ww>160 or hh>160 or xx==0 or yy==0 or xx+ww>=x1-x0 or yy+hh>=y1-y0:continue
             component=labels[yy:yy+hh,xx:xx+ww]==i
             evidence=base[y0+yy:y0+yy+hh,x0+xx:x0+xx+ww]>0
             if np.count_nonzero(component&evidence)/area<.3:continue
             patch=mask[y0+yy:y0+yy+hh,x0+xx:x0+xx+ww];patch[component]=1
     if not matched or np.count_nonzero(mask)<8:return None
-    mask=cv2.dilate(mask,np.ones((3,3),np.uint8))
-    mask=cv2.dilate(mask,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(17,17)))
-    allowed=np.zeros_like(mask);allowed[y:y+h,x:x+w]=interior.astype(np.uint8);mask*=allowed
+    allowed=np.zeros_like(mask);allowed[y:y+h,x:x+w]=interior.astype(np.uint8)
+    # Keep complete glyph components whose core sits inside `interior` so glyphs near the
+    # outline margin are not sliced in half, while clipping the wide 17x17 context halo to `interior`.
+    core=cv2.dilate(mask,np.ones((3,3),np.uint8))
+    box_guard=np.zeros_like(mask)
+    if w>6 and h>6:
+        box_guard[y+3:y+h-3,x+3:x+w-3]=(polygon[3:h-3,3:w-3]>0) | (gray[y+3:y+h-3,x+3:x+w-3]<245)
+    core*=box_guard
+    halo=cv2.dilate(core,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(17,17)))*allowed
+    mask=np.maximum(core if np.count_nonzero(mask&allowed)>=np.count_nonzero(mask)*.5 else mask*allowed,halo)
     # Refuse an almost whole-balloon erasure or a suspiciously tiny mask.
     if np.count_nonzero(mask)<8 or np.count_nonzero(mask)>np.count_nonzero(interior)*.65:return None
     return mask

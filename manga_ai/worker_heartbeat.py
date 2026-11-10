@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 import threading
+import time
 
 
 @contextmanager
@@ -12,11 +13,14 @@ def heartbeat(path, interval=5.0):
 
     def signal():
         try:
-            path.touch()
+            path.write_text(f"{time.time():.6f}\n", encoding="ascii")
         except OSError:
-            # The request can still complete; the bridge falls back to its
-            # ordinary silence timeout when the signal cannot be written.
-            pass
+            try:
+                path.touch()
+            except OSError:
+                # The request can still complete; the bridge falls back to its
+                # ordinary silence timeout when the signal cannot be written.
+                pass
 
     def refresh():
         while not stopped.wait(interval):

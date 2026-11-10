@@ -301,8 +301,26 @@ def bubble_shape(candidate, gray=None):
     contours,_=cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
     contour=cv2.approxPolyDP(max(contours,key=cv2.contourArea),.8,True).reshape(-1,2)
     outline=(contour+np.array([x,y])).astype(int).tolist()
-    inset=max(5,min(12,round(min(w,h)*.045)))
-    inner=cv2.erode(mask,np.ones((inset*2+1,)*2,np.uint8),borderType=cv2.BORDER_CONSTANT,borderValue=0)
+    scale=max(1.0,min(w,h)/180.0)
+    inset=max(5,min(round(12*scale),round(min(w,h)*.045)))
+    clean_mask=mask
+    has_border_dark=False
+    if gray is not None and 0<=x and 0<=y and y+h<=gray.shape[0] and x+w<=gray.shape[1]:
+        crop=gray[y:y+h,x:x+w]
+        dark=(crop<200).astype(np.uint8)
+        n_lbl,labels,_,_=cv2.connectedComponentsWithStats(dark,8)
+        if n_lbl>1:
+            eroded=cv2.erode(mask,np.ones((5,5),np.uint8),borderType=cv2.BORDER_CONSTANT,borderValue=0)
+            border_dark=np.zeros((h,w),np.uint8)
+            for lbl in range(1,n_lbl):
+                comp=labels==lbl
+                if np.any(eroded[comp]==0):
+                    border_dark[comp]=255
+            if np.any(border_dark&(mask>0)):
+                clean_mask=mask.copy()
+                clean_mask[border_dark>0]=0
+                has_border_dark=bool(np.any(border_dark&(eroded>0)))
+    inner=cv2.erode(clean_mask,np.ones((inset*2+1,)*2,np.uint8),borderType=cv2.BORDER_CONSTANT,borderValue=0)
     sx,sy,sw,sh=candidate["safe"];cx=min(w-1,max(0,round(sx+sw/2-x)))
     rows=[]
     for yy in range(h):
@@ -312,11 +330,31 @@ def bubble_shape(candidate, gray=None):
         while right+1<w and inner[yy,right+1]:right+=1
         if right-left>=12:rows.append([y+yy,x+left,x+right+1])
     if not rows:return outline,None
+    clamped_asymmetric=False
+    if gray is not None:
+        core_rows=[r for r in rows if sy<=r[0]<sy+sh] or rows
+        left_exts=[max(0,sx-r[1]) for r in core_rows]
+        right_exts=[max(0,r[2]-(sx+sw)) for r in core_rows]
+        ext_l=float(np.median(left_exts));ext_r=float(np.median(right_exts))
+        max_l=max(left_exts);max_r=max(right_exts)
+        if abs(ext_l-ext_r)>inset*.5 or max_l-ext_l>inset*.5 or max_r-ext_r>inset*.5:
+            cap_x=round(min(ext_l,ext_r)+inset*.5)
+            min_x,max_x=sx-cap_x,sx+sw+cap_x
+            trimmed_x=[[r[0],max(min_x,r[1]),min(max_x,r[2])] for r in rows if min(max_x,r[2])-max(min_x,r[1])>=12]
+            if len(trimmed_x)>=12:
+                rows=trimmed_x;clamped_asymmetric=True
+        ext_t=max(0,sy-rows[0][0]);ext_b=max(0,rows[-1][0]-(sy+sh))
+        if abs(ext_b-ext_t)>inset*2:
+            cap_y=round(min(ext_t,ext_b)+inset)
+            min_y,max_y=sy-cap_y,sy+sh+cap_y
+            trimmed_y=[r for r in rows if min_y<=r[0]<=max_y]
+            if len(trimmed_y)>=12:
+                rows=trimmed_y;clamped_asymmetric=True
     left=min(r[1] for r in rows);right=max(r[2] for r in rows)
     shape={"rows":rows,"center":[sx+sw/2,sy+sh/2],"box":[left,rows[0][0],right-left,rows[-1][0]-rows[0][0]+1]}
     # A transparent balloon can leave the mask short on one side; extend it only
     # up to the first dark stroke. Split children and other detectors are skipped.
-    if gray is not None and candidate.get('detector')=='ai_balloon' and not candidate.get('parent_box') and not candidate.get('geometry_evidence'):
+    if gray is not None and not has_border_dark and not clamped_asymmetric and candidate.get('detector')=='ai_balloon' and not candidate.get('parent_box') and not candidate.get('geometry_evidence'):
         from .shape_completion import complete_shape
         shape=complete_shape(shape,candidate["box"],gray)
     return outline,shape

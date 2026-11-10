@@ -42,6 +42,10 @@ class QaWarningTests(unittest.TestCase):
             self.assertEqual(prompt.count(section), 1)
         self.assertIn('Sound effects and lettering outside bubbles are not translated', prompt)
         self.assertIn('Do not use an em dash or en dash', prompt)
+        self.assertIn('keep explicit Japanese pronouns', prompt)
+        self.assertIn('restore their authentic source-language spelling', prompt)
+        self.assertIn('never transliterate katakana loanwords into Japanese romaji', prompt)
+        self.assertIn('do not flag ocr_suspect merely because noisy text OCR disagrees', prompt)
 
 
 if __name__ == '__main__':

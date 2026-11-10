@@ -18,8 +18,9 @@ FLAGS = frozenset(('ocr_suspect', 'speaker_unclear', 'ambiguous_reference', 'glo
 def validate_response(raw, targets):
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError('Empty translation response')
+    cleaned = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw.strip())
     try:
-        obj = json.loads(raw)
+        obj = json.loads(cleaned)
     except (ValueError, TypeError) as exc:
         raise ValueError('Invalid translation JSON') from exc
     if not isinstance(obj, dict) or set(obj) != {'translations'} or not isinstance(obj['translations'], list):
@@ -27,7 +28,33 @@ def validate_response(raw, targets):
     expected = [s['id'] for s in targets]
     if len(expected) != len(set(expected)):
         raise ValueError('Duplicate target IDs')
+    by_id = {s['id']: s.get('jp', '') for s in targets if isinstance(s, dict) and 'id' in s}
     rows = obj['translations']
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        for extra in list(set(r) - {'id', 'vi', 'flags', 'source_evidence'}):
+            r.pop(extra, None)
+        if 'source_evidence' in r and r['source_evidence'] is None:
+            r.pop('source_evidence', None)
+        if 'flags' not in r or r['flags'] is None:
+            r['flags'] = []
+        elif isinstance(r['flags'], list):
+            norm_flags = []
+            for f in r['flags']:
+                if f is None or (isinstance(f, str) and f.strip().lower() in ('', 'none', 'ok', 'clean')):
+                    continue
+                if isinstance(f, str):
+                    mapped = f if f in FLAGS else 'needs_review'
+                    if mapped not in norm_flags:
+                        norm_flags.append(mapped)
+                else:
+                    norm_flags.append(f)
+            r['flags'] = norm_flags
+        if isinstance(r.get('vi'), str) and not r['vi'].strip():
+            src_jp = by_id.get(r.get('id'), '')
+            if isinstance(src_jp, str) and src_jp.strip() and not re.search(r'[0-9A-Za-z\u3041-\u3096\u30a1-\u30fa\u3400-\u9fff]', src_jp):
+                r['vi'] = '…'
     if any(not isinstance(r, dict) or not {'id', 'vi', 'flags'}.issubset(r) or set(r)-{'id','vi','flags','source_evidence'} or not isinstance(r['id'], str)
            or not isinstance(r['vi'], str) or not r['vi'].strip() or not isinstance(r['flags'], list)
            or any(not isinstance(f, str) or f not in FLAGS for f in r['flags']) for r in rows):

@@ -60,6 +60,33 @@ var MTA = (function () {
         try { if (!file.write(content)) throw Error('Ghi file thất bại: ' + file.fsName); }
         finally { file.close(); }
     }
+    // Keep the last readable checkpoint if Photoshop terminates during a write.
+    function writeCheckpoint(file, content) {
+        file = file instanceof File ? file : new File(file);
+        var backup = new File(file.fsName + '.bak');
+        if (file.exists) {
+            var readable = false;
+            try { MJSON.parse(text(file)); readable = true; } catch (_) {}
+            if (readable && !file.copy(backup.fsName)) throw Error('Không sao lưu được checkpoint');
+            if (!readable && !backup.exists) throw Error('Checkpoint bị hỏng và không có bản sao: ' + file.fsName);
+        }
+        write(file, content);
+    }
+    function validOutput(path) {
+        if (!path) return false;
+        var f = new File(path), opened = false;
+        if (!f.exists || f.length < 16) return false;
+        try {
+            f.encoding = 'BINARY'; opened = f.open('r'); if (!opened) return false;
+            var head = f.read(5);
+            if (/\.pdf$/i.test(path)) {
+                if (head !== '%PDF-') return false;
+                f.seek(Math.max(0, f.length - 2048), 0);
+                return f.read().indexOf('%%EOF') >= 0;
+            }
+            return /\.psd$/i.test(path) && head.substr(0, 4) === '8BPS';
+        } catch (_) { return false; } finally { if (opened) f.close(); }
+    }
     function mkdir(path) {
         var folder = path instanceof Folder ? path : new Folder(path);
         if (!folder.exists) {
@@ -136,9 +163,11 @@ var MTA = (function () {
                 ' --response ' + shell(output.fsName) + ' > ' + shell(dir.fsName + '/worker.log') + ' 2>&1 &';
             app.system('/bin/sh -c ' + shell(command));
         }
-        var start = (new Date()).getTime(), lastSignal = start, lastNoticeMinute = 0, sawHeartbeat = false;
+        var start = (new Date()).getTime(), lastSignal = start, prevCheck = start, lastNoticeMinute = 0, sawHeartbeat = false;
         while (!output.exists) {
             var now = (new Date()).getTime(), beat = new File(heartbeatPath);
+            if (now - prevCheck > 5000 && lastSignal < now) lastSignal = Math.min(now, lastSignal + (now - prevCheck));
+            prevCheck = now;
             if (beat.exists && beat.modified) {
                 var beatTime = beat.modified.getTime();
                 if (isFinite(beatTime) && beatTime >= start - 5000 && beatTime <= now + 5000) {
@@ -599,10 +628,17 @@ var MTA = (function () {
     // wrapToWidths keeps the old lines-only API. Soft penalties only: a break
     // inside a quotation, after an opening quote or a bare ellipsis, after a
     // Vietnamese function word, and a very short word left alone on a line.
+    var HYPHEN_SPLIT=/^([^\s\u2013\u2014-]*[A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,}[\u2013\u2014-])([A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,}[^\s\u2013\u2014-]*)$|^([^\s\u2013\u2014-]*[A-Za-z\u00c0-\u024f\u1e00-\u1eff]{2,})([\u2013\u2014-]{2,}[.!?\u2026\u201d\u2019)]*)$/;
     function wrapScored(paragraphs,widths,measure) {
-        var words=[],opened=[],i,j;
+        var words=[],glues=[],opened=[],i,j;
         for(i=0;i<paragraphs.length;i++){
-            words.push(paragraphs[i].replace(/^\s+|\s+$/g,'').split(/\s+/));
+            var rawWords=paragraphs[i].replace(/^\s+|\s+$/g,'').split(/\s+/),ws=[],gs=[];
+            for(j=0;j<rawWords.length;j++){
+                var m=HYPHEN_SPLIT.exec(rawWords[j]);
+                if(m){ws.push(m[1]||m[3]);gs.push(true);ws.push(m[2]||m[4]);gs.push(false);}
+                else{ws.push(rawWords[j]);gs.push(false);}
+            }
+            words.push(ws);glues.push(gs);
             var depth=0,row=[0];
             for(j=0;j<words[i].length;j++){
                 depth+=(words[i][j].match(/[\u201c\u2018(]/g)||[]).length-(words[i][j].match(/[\u201d\u2019)]/g)||[]).length;
@@ -618,7 +654,8 @@ var MTA = (function () {
             if(memo[key]!==undefined)return memo[key];
             var best=null,content='';
             for(var end=start;end<words[paragraph].length;end++){
-                content+=(end>start?' ':'')+words[paragraph][end];
+                var sep=(end===start||glues[paragraph][end-1])?'':' ';
+                content+=sep+words[paragraph][end];
                 var width=measure(content);if(width>widths[row])break;
                 var next=end+1===words[paragraph].length;
                 var tail=solve(row+1,next?paragraph+1:paragraph,next?0:end+1);
@@ -626,6 +663,7 @@ var MTA = (function () {
                 var cost=tail.cost+Math.pow((widths[row]-width)/widths[row],2);
                 var rawWord=words[paragraph][end],last=rawWord.toLowerCase().replace(/[.,!?;:\u2026]+$/g,'');
                 if(!next){
+                    if(glues[paragraph][end])cost+=0.25;
                     if(/^(và|của|với|cho|từ|để|về|là|một|các|những|tự)$/.test(last))cost+=0.35;
                     if(/[\u201c\u2018(]$/.test(rawWord))cost+=2;
                     if(/^(\u2026|\.\.\.)$/.test(rawWord))cost+=1;
@@ -763,6 +801,69 @@ var MTA = (function () {
     function applyLeading(t, lead, pixels, resolution) {
         if (!lead.auto) t.leading = UnitValue(pixels * 72 / resolution, 'pt');
     }
+    function clearTextStrokeFX(doc, container) {
+        if (!doc || !container || !container.layers) return false;
+        var cleared = false;
+        for (var i = 0; i < container.layers.length; i++) {
+            var l = container.layers[i];
+            if (l && l.typename === 'LayerSet') {
+                if (clearTextStrokeFX(doc, l)) cleared = true;
+            } else if (l && typeof LayerKind !== 'undefined' && l.kind === LayerKind.TEXT) {
+                try {
+                    app.activeDocument = doc; doc.activeLayer = l;
+                    var id = charIDToTypeID, action = new ActionDescriptor(), ref = new ActionReference();
+                    ref.putProperty(id('Prpr'), id('Lefx')); ref.putEnumerated(id('Lyr '), id('Ordn'), id('Trgt'));
+                    action.putReference(id('null'), ref);
+                    var effects = new ActionDescriptor(), stroke = new ActionDescriptor();
+                    effects.putUnitDouble(id('Scl '), id('#Prc'), 100);
+                    stroke.putBoolean(id('enab'), false);
+                    effects.putObject(id('FrFX'), id('FrFX'), stroke);
+                    action.putObject(id('T   '), id('Lefx'), effects);
+                    executeAction(id('setd'), action, DialogModes.NO);
+                    cleared = true;
+                } catch (_) {}
+            }
+        }
+        return cleared;
+    }
+    function saveAsWithTempFallback(doc, target, opts) {
+        try {
+            doc.saveAs(target, opts, true, Extension.LOWERCASE);
+        } catch (saveErr) {
+            try { if (target.exists) target.remove(); } catch (_) {}
+            var ext = target.name.match(/\.[^.]+$/);
+            var tmp = new File(Folder.temp.fsName + '/mta_export_' + unique() + (ext ? ext[0] : ''));
+            try {
+                try {
+                    doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
+                } catch (tmpErr) {
+                    if (ext && ext[0].toLowerCase() === '.pdf') {
+                        var savedNoFx = false;
+                        if (clearTextStrokeFX(doc, doc)) {
+                            try { if (tmp.exists) tmp.remove(); } catch (_) {}
+                            try {
+                                doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
+                                savedNoFx = true;
+                            } catch (_) {}
+                        }
+                        if (!savedNoFx) {
+                            if (opts && opts.layers === true) {
+                                try { if (tmp.exists) tmp.remove(); } catch (_) {}
+                                doc.saveAs(tmp, pdfSaveOptions({pdfLayers: false}), true, Extension.LOWERCASE);
+                            } else {
+                                throw tmpErr;
+                            }
+                        }
+                    } else {
+                        throw tmpErr;
+                    }
+                }
+                if (!tmp.exists || !tmp.copy(target.fsName)) throw saveErr;
+            } finally {
+                try { if (tmp.exists) tmp.remove(); } catch (_) {}
+            }
+        }
+    }
     function saveCopy(doc, folder, base, exports, kind, savedFiles) {
         mkdir(folder);
         exports = exports || {};
@@ -779,12 +880,12 @@ var MTA = (function () {
         var pdf = new File(folder.fsName + '/' + name + '.pdf');
         if (savePsd) {
             var opts = new PhotoshopSaveOptions(); opts.layers = true; opts.embedColorProfile = true;
-            doc.saveAs(psd, opts, true, Extension.LOWERCASE);
+            saveAsWithTempFallback(doc, psd, opts);
             if (savedFiles) savedFiles.psd = psd.fsName;
         }
         if (savePdf) {
             var pdfOpts = pdfSaveOptions(exports);
-            doc.saveAs(pdf, pdfOpts, true, Extension.LOWERCASE);
+            saveAsWithTempFallback(doc, pdf, pdfOpts);
             if (savedFiles) savedFiles.pdf = pdf.fsName;
         }
         if (exports && (exports.png || exports.jpg)) {
@@ -807,6 +908,6 @@ var MTA = (function () {
         }
         return savePsd ? psd : pdf;
     }
-    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
+    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
             snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

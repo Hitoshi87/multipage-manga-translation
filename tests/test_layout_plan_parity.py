@@ -43,6 +43,10 @@ CASES = [
      'ref': 1.2, 'options': {'min': 10, 'max': 50, 'leading': 1.05, 'accRatio': .95, 'capRatio': .68, 'fillWeight': 4, 'fillTarget': .4}},
     {'shape': ellipse(120, 90, 110, 80), 'paragraphs': ['Một hai ba', 'bốn năm sáu bảy tám chín mười'],
      'ref': 1.1, 'options': {'min': 12, 'max': 44, 'leading': 1.0}},
+    {'shape': rect_shape([0, 0, 99, 315]), 'paragraphs': ['Aizawa-san!'],
+     'ref': 1.2, 'options': {'min': 18, 'max': 48, 'leading': 1.05}},
+    {'shape': rect_shape([0, 0, 121, 373]), 'paragraphs': ['Là giải thưởng lớn của cuộc thi nấu ăn Pháp tại Tokyo——'],
+     'ref': 1.15, 'options': {'min': 30, 'max': 72, 'leading': 1.05}},
 ]
 
 
@@ -63,6 +67,14 @@ class ParityTests(unittest.TestCase):
     def test_wrap_prefers_readable_breaks_and_page_cap_uses_lower_median(self):
         scored = wrap_scored(['một hai ba bốn'], [9, 9], len)
         self.assertEqual(scored[1], ['một hai', 'ba bốn'])
+        hyph = wrap_scored(['Aizawa-san!'], [7, 7], len)
+        self.assertEqual(hyph[1], ['Aizawa-', 'san!'])
+        whole = wrap_scored(['Aizawa-san!'], [15], len)
+        self.assertEqual(whole[1], ['Aizawa-san!'])
+        prolonged = wrap_scored(['Tokyo——'], [5, 5], len)
+        self.assertEqual(prolonged[1], ['Tokyo', '——'])
+        prolonged_whole = wrap_scored(['Tokyo——'], [10], len)
+        self.assertEqual(prolonged_whole[1], ['Tokyo——'])
         self.assertEqual(page_size_cap([38, 62], 1.3, 10), 1.3 * 38)
         self.assertEqual(page_size_cap([], 1.3, 10), None)
 

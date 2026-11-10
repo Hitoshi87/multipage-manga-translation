@@ -69,6 +69,15 @@ class ShapeCompletionTests(unittest.TestCase):
         zs = shape_of(z)
         self.assertIs(complete_shape(zs, BOX, gray), zs)
 
+    def test_diagonal_spiky_teeth_stop_extension_at_inward_tips(self):
+        gray = scene()
+        for y in range(60, 240, 24):
+            cv2.line(gray, (245, y), (295, y + 12), 0, 2)
+            cv2.line(gray, (295, y + 12), (245, y + 24), 0, 2)
+        done = complete_shape(shape_of(mask_rows(.6)), BOX, gray)
+        mid = done['rows'][len(done['rows']) // 2]
+        self.assertLessEqual(mid[2], 255)
+
 
 if __name__ == '__main__':
     unittest.main()

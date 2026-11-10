@@ -16,11 +16,22 @@ STROKE = 9   # a drawn outline is a long stroke; halftone dots and short hatchin
 
 
 def long_strokes(gray):
-    """Dark pixels that belong to a long vertical or horizontal stroke."""
+    """Dark pixels that belong to a long vertical, horizontal, diagonal or connected stroke."""
     dark = (gray < DARK).astype(np.uint8)
     vertical = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((STROKE, 1), np.uint8))
     horizontal = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.ones((1, STROKE), np.uint8))
-    return (vertical | horizontal) > 0
+    diag1 = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.eye(STROKE, dtype=np.uint8))
+    diag2 = cv2.morphologyEx(dark, cv2.MORPH_OPEN, np.fliplr(np.eye(STROKE, dtype=np.uint8)))
+    strokes = (vertical | horizontal | diag1 | diag2) > 0
+    n_lbl, labels, stats, _ = cv2.connectedComponentsWithStats(dark, connectivity=8)
+    if n_lbl > 1:
+        keep = np.zeros(n_lbl, dtype=bool)
+        for i in range(1, n_lbl):
+            w, h, area = stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT], stats[i, cv2.CC_STAT_AREA]
+            if max(w, h) >= STROKE * 2 or area >= STROKE * 3:
+                keep[i] = True
+        strokes |= keep[labels]
+    return strokes
 
 
 def _ellipse(box, inset):
@@ -93,15 +104,25 @@ def complete_shape(shape, box, gray, margin=4):
                     x -= 1
                 new_left = min(left, x + margin)
         out.append([y, new_left, new_right])
-    # Smooth row-to-row jitter caused by single dark strokes; never shrink below the mask.
+    # Smooth row-to-row jitter caused by single dark strokes and stop before inward spike tips; never shrink below the mask.
     arr = np.array(out)
-    for col, pick in ((1, min), (2, max)):
+    win = max(7, min(31, (len(rows) // 6) | 1))
+    pad = win // 2
+    for col in (1, 2):
         values = arr[:, col].astype(float)
-        padded = np.pad(values, 3, mode='edge')
-        smooth = np.array([np.median(padded[i:i + 7]) for i in range(len(values))])
         base = np.array([r[col] for r in rows], float)
-        arr[:, col] = np.round(np.minimum(smooth, base) if col == 1 else np.maximum(smooth, base))
+        p3 = np.pad(values, 2, mode='edge')
+        med = np.array([np.median(p3[i:i + 5]) for i in range(len(values))])
+        pw = np.pad(med, pad, mode='edge')
+        if col == 1:
+            env = np.array([np.max(pw[i:i + win]) for i in range(len(values))])
+            arr[:, col] = np.round(np.minimum(env, base))
+        else:
+            env = np.array([np.min(pw[i:i + win]) for i in range(len(values))])
+            arr[:, col] = np.round(np.maximum(env, base))
     result = arr.tolist()
+    if result == rows:
+        return shape
     left_edge = min(r[1] for r in result)
     right_edge = max(r[2] for r in result)
     return {'rows': result, 'center': [(left_edge + right_edge) / 2, shape['center'][1]],

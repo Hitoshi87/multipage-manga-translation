@@ -4,14 +4,25 @@
 /* Manga Typesetter — UI 1107-ui.4. File > Scripts > Browse. UTF-8. */
 (function () {
     var root = new File($.fileName).parent;
+    var supervisedPath=$.global.MTA_SUPERVISED_JOB || null, supervisedResult=$.global.MTA_SUPERVISED_RESULT || null;
+    var supervisedScope=$.global.MTA_SUPERVISED_SCOPE || supervisedPath;
+    var supervisedCursor=Number($.global.MTA_SUPERVISED_CURSOR || 0), supervisedJob=null, supervisorStarting=null, supervisedProgressAt=0, supervisedLastMessage='Đang chuẩn bị';
+    var supervisedBatchSize=Number($.global.MTA_SUPERVISED_BATCH_SIZE || 4);
+    var supervisedPressure=$.global.MTA_SUPERVISED_PRESSURE || null;
+    $.global.MTA_SUPERVISED_JOB=null;$.global.MTA_SUPERVISED_RESULT=null;$.global.MTA_SUPERVISED_CURSOR=null;$.global.MTA_SUPERVISED_SCOPE=null;$.global.MTA_SUPERVISED_BATCH_SIZE=null;$.global.MTA_SUPERVISED_PRESSURE=null;
     var oldRuler = app.preferences.rulerUnits, oldType = app.preferences.typeUnits;
     var oldDialogs = app.displayDialogs;
     var initial = app.documents.length ? app.activeDocument : null;
-    var busy = false, cancelled = false, state = null, inputFolder = null;
+    var busy = false, cancelled = false, state = null, inputFolder = null, activeWorkerScope=null;
     var docs = [], docNames = [], i, pendingPages = [], pendingLog = null;
     var outputFolder = new Folder(root.fsName + '/output');
     for (i = 0; i < app.documents.length; i++) { docs.push(app.documents[i]); docNames.push(app.documents[i].name); }
     try {
+        if(supervisedPath){
+            supervisedJob=MJSON.parse(MTA.read(new File(supervisedPath)));
+            if(supervisedJob.schema!==1 || !supervisedResult)throw Error('Cấu hình giám sát không hợp lệ.');
+            if((new File(supervisedJob.cancel)).exists){cancelled=true;throw Error('Đã hủy trước khi bắt đầu.');}
+        }
         app.preferences.rulerUnits = Units.PIXELS;
         app.preferences.typeUnits = TypeUnits.POINTS;
         app.displayDialogs = DialogModes.NO;
@@ -169,9 +180,14 @@
                         minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         var activeTaskDialog=null, volumeProgress='';
         function tick(message, fraction) {
+            if(supervisedJob && (new File(supervisedJob.cancel)).exists)cancelled=true;
+            if(message)supervisedLastMessage=(volumeProgress?volumeProgress+' — ':'')+message;
+            if(supervisedJob && supervisedJob.progress && (new Date()).getTime()-supervisedProgressAt>5000){
+                try{MTA.write(new File(supervisedJob.progress),MJSON.stringify({message:supervisedLastMessage,at:(new Date()).getTime()}));supervisedProgressAt=(new Date()).getTime();}catch(_){}
+            }
             if (message) status.text = (volumeProgress ? volumeProgress+' — ' : '')+message;
             if (fraction !== undefined) progress.value = fraction;
-            win.update();
+            if(!supervisedPath)win.update();
             if(activeTaskDialog)activeTaskDialog.update();
             return !cancelled;
         }
@@ -188,6 +204,9 @@
         }
         function rpc(payload) {
             payload.ui_version=MTA.uiVersion;
+            // A scan/clean worker can also outlive a crashed Photoshop process.
+            // Recovered attempts share a worker lock for the entire supervised job.
+            if(supervisedScope || activeWorkerScope)payload.worker_scope=supervisedScope || activeWorkerScope;
             if (typeof hwChoice !== 'undefined' && hwChoice && hwChoice.selection) {
                 payload.accel = ['auto', 'cpu', 'coreml', 'cuda'][hwChoice.selection.index];
             }
@@ -613,6 +632,8 @@
                             var pregion = null;
                             for (var pk = 0; pk < s.data.regions.length; pk++) if (s.data.regions[pk].id === s.mapping[pj].id) pregion = s.data.regions[pk];
                             if (!pregion) continue;
+                            var prefined = (result.refined_shapes || {})[pregion.id];
+                            if (prefined) { var pwith = {}, prk; for (prk in pregion) pwith[prk] = pregion[prk]; pwith.shape = prefined; pregion = pwith; }
                             dryConfig.font = config.fonts[MTA.resolveTextRole(pregion, s.mapping[pj].translation, s.mapping[pj].font_role, config.automatic)];
                             try { MTA.addText(copy, copy, pregion, s.mapping[pj].translation, dryConfig); } catch (_) {}
                             var info = MTA.lastLayout();
@@ -713,6 +734,7 @@
 
         function runVolume(cfg){
             var project=cfg.project;cfg.label=cfg.label||'';
+            var oldWorkerScope=activeWorkerScope;activeWorkerScope=project;
             function loadProject(){return rpc({operation:'translation_load',project:project});}
             function latestRun(data){if(!data.runs.length)throw Error('Chưa có lượt dịch');return data.runs[data.runs.length-1];}
             function fileMb(path){try{var f=new File(path);return f.exists?Math.round(f.length/104857.6)/10:null;}catch(_){return null;}}
@@ -756,13 +778,16 @@
                         for(var sl=log.length-1;sl>=0;sl--)if(log[sl].page===failedName)log.splice(sl,1);
                         log.push({page:failedName,status:'failed',stage:'scan',error:String(scanError.message||scanError)});
                         scanFailures.push(failedName);
-                    }finally{if(own&&doc)doc.close(SaveOptions.DONOTSAVECHANGES);}
+                    }finally{if(own&&doc)doc.close(SaveOptions.DONOTSAVECHANGES);if(own && app.documents && app.documents.length===0){try{app.purge(PurgeTarget.ALLCACHES);}catch(_){} try{$.gc();}catch(_){}}}
+                    // Finish at least one scanned page, then checkpoint it and
+                    // restart before opening more pages under memory pressure.
+                    if(cfg.pressureFile && scannedOrder.length && (new File(cfg.pressureFile)).exists)break;
                 }
                 order=scannedOrder;
                 if(!order.length){
                     var pendingState=loadProject(),pendingRun=pendingState.runs.length?pendingState.runs[pendingState.runs.length-1].id:null;
                     var pending=new File(outputFolder.fsName+'/draft_'+(pendingRun||'scan_pending')+'.json');
-                    MTA.write(pending,MJSON.stringify({run_id:pendingRun,project:project,pages:log,translation_failures:failed}));
+                    MTA.writeCheckpoint(pending,MJSON.stringify({run_id:pendingRun,project:project,pages:log,translation_failures:failed}));
                     var failedPages=0;for(var fp=0;fp<log.length;fp++)if(log[fp].status==='failed')failedPages++;
                     var pendingReport=null;
                     if(pendingRun)try{pendingReport=rpc({operation:'translation_report',project:project,log:pending.fsName,title:cfg.title});}catch(pe){if(pe.workerUnresponsive)throw pe;}
@@ -778,7 +803,7 @@
                     if(!tick(cfg.label+'Dịch tự động'+(report?': '+report.completed+'/'+report.total+' nhóm':'…'),30))throw Error('Đã hủy');
                     var autoRequest={operation:'translation_autopilot',project:project,budget_seconds:140};
                     if(cfg.streamLimit){autoRequest.max_page_ordinal=cfg.streamLimit;autoRequest.max_groups=1;autoRequest.max_slice_attempts=1;}
-                    if(run)autoRequest.run_id=run.id;
+                    if(run)autoRequest.run_id=run.id; else autoRequest.retry_parked=true;
                     report=rpc(autoRequest);run={id:report.run_id};
                     if(report.auto_excluded)autoExcluded=report.auto_excluded.count;
                 }while(!report.done && !report.aborted);
@@ -830,8 +855,13 @@
                         build(s,false,true,false);var priority=[];for(var pr=0;pr<found.review.length;pr++)if(found.review[pr].priority==='high')priority.push(found.review[pr]);
                         log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,reading_order_review:layoutWarnings[found.page_id]||null,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
                     }catch(be){if(be.workerUnresponsive)throw be;log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
-                    finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);}
-                    var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.write(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
+                    finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);if(owned && app.documents && app.documents.length===0){try{app.purge(PurgeTarget.ALLCACHES);}catch(_){} try{$.gc();}catch(_){}}}
+                    var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.writeCheckpoint(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
+                    if(cfg.pressureFile && cfg.streamLimit && bi+1<cfg.streamLimit && (new File(cfg.pressureFile)).exists){
+                        return {log:log,logFile:logFile,failed:failed,scanFailures:scanFailures,engine:chosen,
+                                autoExcluded:autoExcluded,aborted:report.aborted,abortReason:report.abort_reason,
+                                memoryYield:true,nextStart:bi+1};
+                    }
                 }
                 var reportNote='';
                 try{
@@ -841,11 +871,41 @@
                 }catch(re){if(re.workerUnresponsive)throw re;reportNote=' (Không tạo được báo cáo: '+String(re.message||re)+')';}
                 cfg.note('Đã xuất bản nháp; kiểm tra báo cáo '+logFile.fsName+'. Sự cố: '+failed.length+'; OCR/dịch chưa được tự xác nhận.'+reportNote);
                 return {log:log,logFile:logFile,failed:failed,scanFailures:scanFailures,summary:rep2?rep2.summary:null,html:rep2?rep2.html:null,engine:chosen,autoExcluded:autoExcluded,aborted:report.aborted,abortReason:report.abort_reason};
-            }finally{volumeProgress='';outputFolder=savedOutput;}
+            }finally{volumeProgress='';outputFolder=savedOutput;activeWorkerScope=oldWorkerScope;}
         }
 
         // Bounded, chronological batches; the project run grows without
         // retranslating previous groups, and each completed page is exported.
+        function volumePageFinished(entry){
+            return !!(entry && entry.status==='draft' && typeof entry.mapped==='number' &&
+                typeof entry.required==='number' && isFinite(entry.mapped) && isFinite(entry.required) && entry.mapped>=0 && entry.required>=0 &&
+                entry.mapped===Math.floor(entry.mapped) && entry.required===Math.floor(entry.required) &&
+                entry.mapped===entry.required && entry.files &&
+                (!savePdf.value || MTA.validOutput(entry.files.pdf)) &&
+                (!savePsd.value || MTA.validOutput(entry.files.psd)));
+        }
+        function volumePending(files,log){
+            var entries={},pending=[],i,entry,name,reason;
+            for(i=0;i<log.length;i++)entries[log[i].page]=log[i];
+            for(i=0;i<files.length;i++){
+                name=decodeURI(files[i].name);entry=entries[name];
+                if(volumePageFinished(entry))continue;
+                reason=!entry?'not_processed':(entry.status==='failed'?'failed':
+                       (entry.status==='draft' && (typeof entry.mapped!=='number' || typeof entry.required!=='number' ||
+                        !isFinite(entry.mapped) || !isFinite(entry.required) || entry.mapped<0 || entry.required<0 || entry.mapped!==Math.floor(entry.mapped) ||
+                        entry.required!==Math.floor(entry.required) || entry.mapped!==entry.required)?'mapping_incomplete':'output_invalid'));
+                pending.push({page:name,reason:reason,error:entry && entry.error?entry.error:null});
+            }
+            return pending;
+        }
+        function memoryBatchEnd(files,start,size,heavyPages){
+            var end=Math.min(files.length,start+size),i,j,name;
+            for(i=start;i<end;i++){
+                name=decodeURI(files[i].name);
+                for(j=0;j<(heavyPages||[]).length;j++)if(heavyPages[j]===name)return i===start?i+1:i;
+            }
+            return end;
+        }
         function runStreamingVolume(cfg){
             var files=cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);});
             files.sort(function(a,b){var aa=decodeURI(a.name).match(/\d+|\D+/g),bb=decodeURI(b.name).match(/\d+|\D+/g);for(var z=0;z<Math.min(aa.length,bb.length);z++){var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase(),bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();if(av<bv)return -1;if(av>bv)return 1;}return aa.length-bb.length;});
@@ -853,50 +913,59 @@
             rpc({operation:'translation_profile',project:cfg.project,profile:cfg.profile});
             var state=rpc({operation:'translation_load',project:cfg.project}),previous=state.runs.length?state.runs[state.runs.length-1]:null;
             if(previous && previous.streaming && state.profiles[state.profiles.length-1].revision!==previous.profile_revision)throw Error('Cấu hình dịch đã thay đổi; hãy chọn thư mục lưu mới để bắt đầu lượt mới.');
-            var shared=[],sharedFailures=[],last=null,old=latestDraftLog(cfg.output,cfg.project);
+            var shared=[],sharedFailures=[],last=null,old=latestDraftLog(cfg.output,cfg.project,previous && previous.streaming?previous.id:null);
             if(old && previous && previous.streaming){
                 try{var saved=MJSON.parse(MTA.read(old));if(saved.run_id===previous.id){shared=saved.pages||[];sharedFailures=saved.translation_failures||[];}}catch(_){}
             }
-            var count=0,size=4;
-            for(var start=0;start<files.length;start+=size){
+            var count=0,size=(cfg.batchSize===1 || cfg.batchSize===2 || cfg.batchSize===4)?cfg.batchSize:4,batches=0;
+            for(var start=cfg.startIndex||0;start<files.length;){
                 if(cfg.sourceKey && MTA.sourceProjectKey(cfg.folder.fsName,cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==cfg.sourceKey)
                     throw Error('Ảnh đầu vào đã thay đổi trong khi chạy; dừng để tránh ghép nhầm. Các PDF đã xuất vẫn được giữ.');
-                var end=Math.min(files.length,start+size),indices=[];
+                var end=memoryBatchEnd(files,start,size,cfg.heavyPages),indices=[];
                 for(var i=start;i<end;i++){
                     var name=decodeURI(files[i].name),done=false;
-                    for(var j=0;j<shared.length;j++)if(shared[j].page===name && shared[j].status==='draft' && shared[j].mapped===shared[j].required && shared[j].files){
-                        var path=shared[j].files.pdf||shared[j].files.psd;
-                        if(path && (new File(path)).exists)done=true;
-                    }
+                    for(var j=0;j<shared.length;j++)if(shared[j].page===name && volumePageFinished(shared[j]))done=true;
                     if(!done)indices.push(i);
                 }
-                if(!indices.length){count+=end-start;continue;}
+                if(!indices.length){count+=end-start;start=end;continue;}
                 cfg.note('Nhóm trang '+(start+1)+'–'+end+'/'+files.length+': OCR → dịch → clean → xuất PDF…');
                 var part={};for(var key in cfg)part[key]=cfg[key];
                 part.indices=indices;part.streamLimit=end;part.sharedLog=shared;part.sharedFailures=sharedFailures;part.openReport=false;
                 part.label='[Nhóm '+(start+1)+'–'+end+'/'+files.length+'] ';
                 last=runVolume(part);shared=last.log;sharedFailures=last.failed;count+=indices.length;
                 if(last.aborted)throw Error('Đã dừng dịch: '+last.abortReason+'. Các trang đã xuất vẫn được giữ; chạy lại để tiếp tục.');
+                if(last.memoryYield){last.recycle=true;return last;}
+                batches++;
+                if(cfg.maxBatches && batches>=cfg.maxBatches && end<files.length){last.recycle=true;last.nextStart=end;return last;}
+                start=end;
             }
             if(!last && old){
                 var result=rpc({operation:'translation_report',project:cfg.project,log:old.fsName,title:cfg.title});
                 last={log:shared,logFile:old,failed:[],summary:result.summary,html:result.html};
             }
             if(!last)throw Error('Chưa tạo được kết quả.');
-            if(last.html){try{(new File(last.html)).execute();}catch(_){}}
+            last.pendingPages=volumePending(files,shared);
+            if(last.html && cfg.openFinalReport!==false){try{(new File(last.html)).execute();}catch(_){}}
             return last;
         }
 
         // ---------- Rà soát nhanh: fix the few flagged bubbles without hunting through layers ----------
         // Items come from the report queue (urgent first). Each can be opened (page + layer selected),
         // re-lettered with edited text, nudged or resized, then marked done; progress is remembered.
-        function latestDraftLog(folder,expectedProject){
+        function latestDraftLog(folder,expectedProject,expectedRun){
             var logs=folder.exists?folder.getFiles('draft_*.json'):[];
-            if(!logs.length)return null;
             logs.sort(function(a,b){return b.modified.getTime()-a.modified.getTime();});
-            if(!expectedProject)return logs[0];
+            if(!expectedProject)return logs.length?logs[0]:null;
             for(var i=0;i<logs.length;i++){
-                try{if(MJSON.parse(MTA.read(logs[i])).project===expectedProject)return logs[i];}catch(_){}
+                try{var current=MJSON.parse(MTA.read(logs[i]));if(current.project===expectedProject && (!expectedRun || current.run_id===expectedRun))return logs[i];}catch(_){}
+                var backup=new File(logs[i].fsName+'.bak');
+                try{if(backup.exists){var saved=MJSON.parse(MTA.read(backup));if(saved.project===expectedProject && (!expectedRun || saved.run_id===expectedRun))return backup;}}catch(_){}
+            }
+            // A missing primary must not hide its surviving backup.
+            var backups=folder.exists?folder.getFiles('draft_*.json.bak'):[];
+            backups.sort(function(a,b){return b.modified.getTime()-a.modified.getTime();});
+            for(var j=0;j<backups.length;j++){
+                try{var orphan=MJSON.parse(MTA.read(backups[j]));if(orphan.project===expectedProject && (!expectedRun || orphan.run_id===expectedRun))return backups[j];}catch(_){}
             }
             return null;
         }
@@ -1549,6 +1618,8 @@
         var easyTry=easyActions.add('button',undefined,'Chỉ thử 3 trang');
         var easyDirect=easyActions.add('button',undefined,'Chạy cả chương ngay');
         easyDirect.helpTip='Chạy OCR, dịch, clean và chèn ngay, không chạy thử ba trang hay chấm preflight.';
+        var easySupervised=easyActions.add('button',undefined,'Chạy dài tự phục hồi (macOS)');
+        easySupervised.helpTip='Giám sát độc lập, khởi động lại Photoshop sau mỗi nhóm đã lưu hoặc khi crash. Hãy đóng mọi tài liệu Photoshop trước khi chạy.';
         var easyAfter=easyTab.add('group');
         var easyReport=easyAfter.add('button',undefined,'Mở báo cáo gần nhất');easyReport.enabled=false;
         var easyReview=easyAfter.add('button',undefined,'3. Rà soát nhanh trong Photoshop');
@@ -1560,8 +1631,8 @@
         easyColor.helpTip=colorMode.helpTip;
         var easyKeepPsd=easyTab.add('checkbox',undefined,'Lưu thêm file PSD (nặng hơn; mặc định chỉ lưu Photoshop PDF giữ layer)');easyKeepPsd.value=false;
         var easyNote=easyTab.add('statictext',undefined,'',{multiline:true});easyNote.preferredSize=[740,84];
-        controls.push(easyPdfKind,easyColor,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyDirect,easyReport,easyReview,easyKeepPsd);
-        function easySay(text){easyNote.text=text;status.text=text;win.update();}
+        controls.push(easyPdfKind,easyColor,easyChoose,easyOutChoose,easyEngineChoice,easyEnvButton,easyName,easyMode,easyHost,easyModelName,easyKey,easyStart,easyTry,easyDirect,easySupervised,easyReport,easyReview,easyKeepPsd);
+        function easySay(text){easyNote.text=text;status.text=text;if(!supervisedPath)win.update();}
         function easyRefreshKey(){
             try{
                 var k=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV});
@@ -1649,6 +1720,23 @@
             p.group_size=7;p.max_tokens=24576;p.timeout=150;p.retries=1;p.json_mode=true;p.thinking='disabled';p.context_segments=2;
             p.vision_mode=mode===1?'target_crop':'off';p.key_env=p.key_env||EASY_KEY_ENV;p.auto_accept=false;
             return p;
+        }
+        // Resuming must keep the frozen profile and clean engine of the
+        // streaming run, even when the panel has reverted to default choices.
+        function savedStreamingSettings(projectFile,folder){
+            if(!projectFile.exists)return null;
+            var data=rpc({operation:'translation_load',project:projectFile.fsName});
+            var run=data.runs.length?data.runs[data.runs.length-1]:null;
+            if(!run || !run.streaming)return null;
+            var profile=null,i;
+            for(i=0;i<data.profiles.length;i++)if(data.profiles[i].revision===run.profile_revision)profile=data.profiles[i].values;
+            if(!profile)throw Error('Không tìm thấy cấu hình gốc của lượt dịch đang tiếp tục.');
+            var log=latestDraftLog(folder,projectFile.fsName,run.id),engine=null;
+            if(log){
+                var pages=MJSON.parse(MTA.read(log)).pages||[];
+                for(i=pages.length-1;i>=0;i--)if(pages[i].status==='draft' && pages[i].engine){engine=pages[i].engine;break;}
+            }
+            return {profile:profile,engine:engine};
         }
         function syncEasyFolder(f){
             if(!easyFolder || !f || easyFolder.fsName!==f.fsName){lastReportHtml=null;easyReport.enabled=false;}
@@ -1744,10 +1832,112 @@
         easyStart.onClick=function(){easyRun('preflight');};
         easyTry.onClick=function(){easyRun('sample');};
         easyDirect.onClick=function(){easyRun('direct');};
+        easySupervised.onClick=function(){
+            try{
+                if(!/mac/i.test($.os))throw Error('Chế độ tự phục hồi hiện chỉ hỗ trợ macOS.');
+                if(app.documents.length)throw Error('Hãy lưu và đóng mọi tài liệu Photoshop trước khi chạy có giám sát.');
+                if(!easyFolder)throw Error('Hãy chọn thư mục truyện trước.');
+                easySaveApi();
+                if(!aiDetector.value)throw Error('Thiếu model AI nhận diện bong bóng.');
+                var inputFiles=easyFiles();if(!inputFiles.length)throw Error('Thư mục không có ảnh.');
+                var sourceKey=MTA.sourceProjectKey(easyFolder.fsName,inputFiles);
+                var paths=[],heavyPages=[],colorIndex=easyColor.selection?easyColor.selection.index:0;
+                for(var hi=0;hi<inputFiles.length;hi++)paths.push(inputFiles[hi].fsName);
+                try{
+                    easySay('Đang kiểm tra kích thước ảnh để tách trang lớn…');
+                    var inspected=rpc({operation:'inspect_input_memory',paths:paths,requested_channels:colorIndex===2?4:(colorIndex===1?3:0)}).items;
+                    if(!inspected || inspected.length!==inputFiles.length)throw Error('Không đủ thông tin kích thước ảnh.');
+                    for(hi=0;hi<inputFiles.length;hi++)if(inspected[hi].heavy)heavyPages.push(decodeURI(inputFiles[hi].name));
+                }catch(probeError){
+                    if(probeError.workerUnresponsive)throw probeError;
+                    // If header inspection is unavailable, process each page
+                    // alone rather than making an unbounded assumption.
+                    for(hi=0;hi<inputFiles.length;hi++)heavyPages.push(decodeURI(inputFiles[hi].name));
+                }
+                if(MTA.sourceProjectKey(easyFolder.fsName,easyFiles())!==sourceKey)throw Error('Ảnh đầu vào đã đổi trong khi kiểm tra kích thước; hãy bắt đầu lại.');
+                var out=MTA.mkdir(easyOutFolder().fsName);
+                var project=new File(out.fsName+'/project_'+sourceKey+'.json');
+                var resume=savedStreamingSettings(project,out),engine=null;
+                if(resume && resume.engine){
+                    engine=easyEngineById(resume.engine.id);
+                    if(!engine || engine.version!==resume.engine.version)throw Error('Engine của lượt trước không sẵn sàng hoặc đã đổi phiên bản: '+resume.engine.id+' '+resume.engine.version);
+                }else engine=easyEngine();
+                var scanEngine=selectedEngine(),mode=easyMode.selection?easyMode.selection.index:0;
+                var profile=resume?resume.profile:easyProfile(project.fsName,mode);
+                if(!fontSettingsFile.exists){
+                    var comic=chooseFontById(font,'Pangolin-Regular')?'Pangolin-Regular':(chooseFontById(font,'Itim-Regular')?'Itim-Regular':null);
+                    if(comic){chooseFontById(boxFont,comic);chooseFontById(shoutFont,comic);}
+                }
+                options();
+                var dir=MTA.mkdir(root.fsName+'/work/supervised/'+MTA.unique());
+                app.system('/bin/chmod 700 '+MTA.shell(dir.fsName));
+                var job={schema:1,script:(new File(root.fsName+'/Photoshop_Typeset.jsx')).fsName,
+                    folder:easyFolder.fsName,output:out.fsName,project:project.fsName,sourceKey:sourceKey,
+                    profile:profile,title:'Báo cáo: '+(profile.series_name||easyName.text||'bộ truyện'),engine:engine,scanEngine:scanEngine,
+                    cancel:dir.fsName+'/cancel',progress:dir.fsName+'/progress.json',heavyPages:heavyPages,settings:{pdfLayers:(easyPdfKind.selection?easyPdfKind.selection.index:0)===0,
+                    psd:easyKeepPsd.value===true,color:easyColor.selection?easyColor.selection.index:0,png:png.value,jpg:jpg.value,
+                    dialogue:fontIds[font.selection.index],box:fontIds[boxFont.selection.index],shout:fontIds[shoutFont.selection.index],
+                    automatic:autoRoles.value,uppercase:uppercaseText.value,autoSize:autoSize.value,min:minSize.text,max:maxSize.text,
+                    autoLeading:leadingAuto.value,leading:leading.text,detail:detailChoice.selection.index,hardware:hwChoice.selection.index,
+                    magi:magiOrder.value,koharu:koharuOrder.value,alreadyClean:alreadyClean.value}};
+                var jobFile=new File(dir.fsName+'/job.json');MTA.write(jobFile,MJSON.stringify(job));
+                var stopFile=new File(dir.fsName+'/Dung.command');
+                MTA.write(stopFile,'#!/bin/sh\ntouch '+MTA.shell(job.cancel)+'\n');
+                app.system('/bin/chmod 700 '+MTA.shell(stopFile.fsName));
+                var python=new File(root.fsName+'/.venv/bin/python');if(!python.exists)throw Error('Thiếu Python trong .venv.');
+                var command='cd '+MTA.shell(root.fsName)+' && '+MTA.shell(python.fsName)+' -m manga_ai.photoshop_supervisor '+MTA.shell(jobFile.fsName)+' > '+MTA.shell(dir.fsName+'/supervisor.log')+' 2>&1 &';
+                alert('Sẽ khởi động bộ giám sát khi bạn đóng thông báo. Photoshop sẽ chạy theo từng nhóm và tự mở lại khi cần.'+
+                    (resume?'\n\nTiếp tục project cũ với cấu hình đã lưu: '+profile.model+', chế độ ảnh '+profile.vision_mode+', engine '+engine.id+'.':'')+
+                    '\nTrang lớn hoặc chưa đọc được kích thước sẽ được xử lý riêng: '+heavyPages.length+'.'+
+                    '\n\nTrạng thái: '+dir.fsName+'/supervisor_status.json\nTiến độ: '+dir.fsName+'/progress.json\nĐể dừng tại điểm an toàn, mở file Dung.command trong thư mục trên.');
+                app.system('/bin/sh -c '+MTA.shell(command));
+                supervisorStarting=dir;
+                win.close();
+            }catch(e){alert('Không bắt đầu được chế độ giám sát: '+String(e.message||e));}
+        };
         loadEngines();easyFillEngines();easyRefreshKey();
         try{easyRenderPlan(rpc({operation:'translation_env_check',key_env:EASY_KEY_ENV}));}catch(_){easyPlan.text='Chưa kiểm tra được môi trường. Bấm "Kiểm tra môi trường".';}
-        syncInputs();win.center(); win.show();
-    } catch (e) { alert('Manga Typesetter AI: ' + e.message + (e.line ? '\nDòng: ' + e.line : '')); }
+        if(supervisedPath){
+            (function(){
+                var response;
+                try{
+                    if(cancelled || (new File(supervisedJob.cancel)).exists){cancelled=true;throw Error('Đã hủy trước khi bắt đầu.');}
+                    if(app.documents.length && !supervisedJob.allowOpenDocs)throw Error('Photoshop có tài liệu đang mở; dừng để bảo vệ tài liệu.');
+                    // The first attempt may attach to an already-running
+                    // Photoshop. Clear cache before opening its first page too.
+                    try{app.purge(PurgeTarget.ALLCACHES);}catch(_){} try{$.gc();}catch(_){}
+                    var st=supervisedJob.settings;
+                    if(!chooseFontById(font,st.dialogue)||!chooseFontById(boxFont,st.box)||!chooseFontById(shoutFont,st.shout))throw Error('Thiếu font đã dùng cho lượt chạy.');
+                    autoRoles.value=st.automatic;uppercaseText.value=st.uppercase;autoSize.value=st.autoSize;
+                    minSize.text=st.min;maxSize.text=st.max;leadingAuto.value=st.autoLeading;leading.text=st.leading;
+                    detailChoice.selection=st.detail;hwChoice.selection=st.hardware;magiOrder.value=st.magi;koharuOrder.value=st.koharu;
+                    alreadyClean.value=st.alreadyClean;lang.selection=lang.find('jpn_vert');rtl.value=true;
+                    savePdf.value=true;pdfLayers.value=st.pdfLayers;savePsd.value=st.psd;colorMode.selection=st.color;png.value=st.png;jpg.value=st.jpg;
+                    selectSavedEngine(supervisedJob.scanEngine);
+                    if(!easyEngineById(supervisedJob.engine.id) || easyEngineById(supervisedJob.engine.id).version!==supervisedJob.engine.version)throw Error('Engine clean đã lưu không sẵn sàng hoặc đã đổi phiên bản.');
+                    if(!aiDetector.value)throw Error('Thiếu model AI nhận diện.');
+                    var folder=new Folder(supervisedJob.folder),out=new Folder(supervisedJob.output);
+                    if(!folder.exists || !out.exists)throw Error('Thư mục ảnh hoặc kết quả không còn sẵn sàng.');
+                    if(MTA.sourceProjectKey(folder.fsName,folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==supervisedJob.sourceKey)throw Error('Ảnh đầu vào đã đổi; dừng để tránh ghép nhầm.');
+                    busy=true;for(var ci=0;ci<controls.length;ci++)controls[ci].enabled=false;close.enabled=false;
+                    var res=runStreamingVolume({project:supervisedJob.project,profile:supervisedJob.profile,title:supervisedJob.title,
+                        note:easySay,engine:supervisedJob.engine,folder:folder,output:out,sourceKey:supervisedJob.sourceKey,
+                        startIndex:supervisedCursor,batchSize:supervisedBatchSize,pressureFile:supervisedPressure,heavyPages:supervisedJob.heavyPages||[],maxBatches:1,openFinalReport:false});
+                    response=res.recycle?{state:'recycle',next_cursor:res.nextStart}:{state:res.pendingPages.length?'needs_attention':'complete',
+                        message:res.pendingPages.length?'Còn '+res.pendingPages.length+' trang chưa hoàn tất; xem báo cáo và chạy lại để tiếp tục.':'Đã chạy hết các nhóm. Xem báo cáo trong '+out.fsName,
+                        pending_pages:res.pendingPages,summary:res.summary,report:res.html};
+                }catch(se){response={state:cancelled?'cancelled':'failed',message:String(se.message||se)+(se.line?' (dòng '+se.line+')':'')};}
+                try{MTA.write(new File(supervisedResult),MJSON.stringify(response));}catch(_){}
+                busy=false;
+            })();
+        }else{
+            syncInputs();win.center();win.show();
+            if(supervisorStarting)MTA.write(new File(supervisorStarting.fsName+'/ready'),'ready');
+        }
+    } catch (e) {
+        if(supervisedResult){try{MTA.write(new File(supervisedResult),MJSON.stringify({state:cancelled?'cancelled':'failed',message:String(e.message||e)+(e.line?' (dòng '+e.line+')':'')}));}catch(_){}}
+        else alert('Manga Typesetter AI: ' + e.message + (e.line ? '\nDòng: ' + e.line : ''));
+    }
     finally {
         app.preferences.rulerUnits = oldRuler; app.preferences.typeUnits = oldType; app.displayDialogs = oldDialogs;
     }
