@@ -99,7 +99,8 @@ def save_profile(path, profile):
     allowed = ('series_name', 'general_prompt', 'style_prompt', 'localization_policy', 'glossary',
                'base_url', 'model', 'max_tokens', 'timeout', 'retries', 'json_mode', 'thinking', 'key_env', 'group_size',
                'input_price_per_million', 'output_price_per_million', 'auto_accept',
-               'provider_kind', 'max_input_chars', 'context_segments', 'vision_mode', 'cast_prompt', 'strip_honorifics')
+               'provider_kind', 'max_input_chars', 'context_segments', 'vision_mode', 'cast_prompt', 'strip_honorifics',
+               'address_policy', 'dialogue_review')
     if any(k not in allowed for k in profile):
         raise ValueError('Trường cấu hình không hợp lệ')
     state = load(path)
@@ -109,11 +110,17 @@ def save_profile(path, profile):
                 'max_tokens':4096, 'timeout':90, 'retries':1, 'json_mode':False,
                 'thinking':'default', 'key_env':'MANGA_TRANSLATION_API_KEY', 'group_size':20,
                 'input_price_per_million':None, 'output_price_per_million':None, 'auto_accept':False,
-                'provider_kind':'openai_compatible', 'max_input_chars':24000, 'context_segments':6, 'vision_mode':'off', 'cast_prompt':'', 'strip_honorifics':True}
+                'provider_kind':'openai_compatible', 'max_input_chars':24000, 'context_segments':6, 'vision_mode':'off', 'cast_prompt':'', 'strip_honorifics':True,
+                'address_policy':'', 'dialogue_review':False}
     # Loading a frozen legacy profile must not silently change its revision.
     if state['profiles'] and 'strip_honorifics' not in state['profiles'][-1]['values'] and 'strip_honorifics' not in profile:
         defaults.pop('strip_honorifics')
+    for field in ('address_policy', 'dialogue_review'):
+        if state['profiles'] and field not in state['profiles'][-1]['values'] and field not in profile:
+            defaults.pop(field)
     defaults.update(profile)
+    if not isinstance(defaults.get('address_policy', ''), str) or len(defaults.get('address_policy', '')) > 6000 or type(defaults.get('dialogue_review', False)) is not bool:
+        raise ValueError('Quy tắc xưng hô tối đa 6000 ký tự; kiểm tra ngữ cảnh cần true/false')
     compose(defaults)
     from .providers import PROVIDERS
     if defaults['provider_kind'] not in PROVIDERS:raise ValueError('Provider không được hỗ trợ')
@@ -449,7 +456,7 @@ def prepare(path):
                         context_segments=int(settings.get('context_segments',2)),max_input_chars=int(settings.get('max_input_chars',24000)),
                         max_pages=4 if settings.get('vision_mode','off')!='off' else None)
     run = {'id':'run_'+uuid.uuid4().hex, 'profile_revision':profile['revision'], 'created_at':now(),
-           'translation_quality_version':2,
+           'translation_quality_version':3,
            'compiled_system':system, 'compiled_system_revision':digest(system), 'grouping_version':'quote_links_v1',
            'groups':groups, 'blocked_ids':[s['id'] for s in segments if not s['jp'] and s.get('source_status') != 'excluded']}
     state['runs'].append(run); save(path,state)
@@ -475,7 +482,7 @@ def prepare_stream(path, max_page_ordinal):
     if not run or not run.get('streaming'):
         system=compose(settings)
         run={'id':'run_'+uuid.uuid4().hex,'profile_revision':profile['revision'],'created_at':now(),
-             'translation_quality_version':2,
+             'translation_quality_version':3,
              'compiled_system':system,'compiled_system_revision':digest(system),'grouping_version':'quote_links_v1',
              'streaming':True,'groups':[],'blocked_ids':[],'max_page_ordinal':0}
         state['runs'].append(run)
@@ -573,12 +580,32 @@ def run_group(path, run_id, group_id, cancel=None):
             if len(run['compiled_system'])+len(json.dumps(trial,ensure_ascii=False))<=int(profile.get('max_input_chars',24000)):
                 selected=[item]+selected
         if selected:payload['prior_translations']=selected
+    if run.get('translation_quality_version', 0) >= 3:
+        from .continuity import dialogue_memory
+        selected=[]
+        for item in reversed(dialogue_memory(state,run,group)):
+            if any(item['id']==r['id'] for r in payload.get('prior_translations',[])):
+                continue
+            trial={**payload,'dialogue_memory':[item]+selected}
+            if len(run['compiled_system'])+len(json.dumps(trial,ensure_ascii=False))<=int(profile.get('max_input_chars',24000)):
+                selected=[item]+selected
+        if selected:payload['dialogue_memory']=selected
     meta = None
     raw = None
     try:
         raw, meta = call_provider(call_profile, run['compiled_system'], payload)
         rows = validate_response(raw,group['targets'])
         meta=dict(meta or {})
+        if run.get('translation_quality_version',0)>=3 and profile.get('dialogue_review',False):
+            from .continuity import review,combined_usage
+            rows,review_meta=review(call_profile,run['compiled_system'],payload,rows,group['targets'],call_provider,cancel)
+            meta['dialogue_review']=review_meta
+            required_usage=[meta.get('usage') or {}]
+            if review_meta['status']!='skipped_input_limit':required_usage.append(review_meta.get('usage') or {})
+            meta['usage_complete']=all(type(usage.get(key)) is int for usage in required_usage for key in ('prompt_tokens','completion_tokens'))
+            meta['usage']=combined_usage(meta.get('usage'),review_meta.get('usage'))
+        if payload.get('dialogue_memory'):
+            meta['dialogue_memory_ids']=[t['id'] for t in payload['dialogue_memory']]
         if payload.get('prior_translations'):
             meta['context_translation_ids']=[t['id'] for t in payload['prior_translations']]
         if run.get('translation_quality_version', 0) >= 2 and profile.get('strip_honorifics', True):
@@ -589,7 +616,7 @@ def run_group(path, run_id, group_id, cancel=None):
                 if removed:
                     row['_provider_translation']=row['vi'];row['vi']=clean
                     row['_text_adjustments']=[{'kind':'honorific_removed','count':removed}]
-                    warnings=qa_warnings(target['jp'],clean)
+                    warnings=list(dict.fromkeys([w for w in row.get('_qa_warnings',[]) if w.startswith('dialogue_') or w=='address_terms_changed']+qa_warnings(target['jp'],clean)))
                     if warnings:row['_qa_warnings']=warnings
                     else:row.pop('_qa_warnings',None)
         _quote_consistency(rows,group.get('quote_links',[]))
@@ -633,11 +660,16 @@ def run_group(path, run_id, group_id, cancel=None):
         run=next(r for r in latest['runs'] if r['id']==run_id)
         group=next(g for g in run['groups'] if g['id']==group_id)
         if group['status']=='completed': return envelope('translation','completed',group,job_id=run_id)
+        if run.get('translation_quality_version',0)>=3:
+            from .continuity import memory_is_current
+            if not memory_is_current(latest,run,payload.get('dialogue_memory',[])+payload.get('prior_translations',[])):
+                raise ValueError('Ngữ cảnh bản dịch đã thay đổi trong khi dịch; hãy thử lại nhóm')
         group['results']=[{'id':r['id'],'semantic_translation':r['vi'],'flags':r['flags'],
                            **({'provider_translation':r['_provider_translation'],'text_adjustments':r['_text_adjustments']} if '_provider_translation' in r else {}),
                            **({'source_evidence':{**r['source_evidence'],'status':'proposed','origin':'vision_model','source_id':r['id']}} if mode!='off' and 'source_evidence' in r else {}),
                            **({'source_evidence_error':r['_source_evidence_error']} if r.get('_source_evidence_error') else {}),
                            **({'qa_warnings':r['_qa_warnings']} if r.get('_qa_warnings') else {}),
+                           **({'dialogue_original_translation':r['_dialogue_original']} if '_dialogue_original' in r else {}),
                            'status':'needs_review' if r['flags'] or t.get('source_status','unreviewed') != 'verified' else ('auto_accepted' if profile['auto_accept'] else 'validated'),
                            'source_revision':t['source_revision'],
                            **({'source_status':t['source_status']} if 'source_status' in t else {}),
@@ -646,7 +678,7 @@ def run_group(path, run_id, group_id, cancel=None):
                                   'model_requested':profile['model'],'provider':profile['base_url'],
                                   'prompt_revision':run['compiled_system_revision'],'output_valid':True})
         usage=meta.get('usage') or {}
-        if profile['input_price_per_million'] is not None and profile['output_price_per_million'] is not None and isinstance(usage.get('prompt_tokens'),int) and isinstance(usage.get('completion_tokens'),int):
+        if meta.get('usage_complete',True) and profile['input_price_per_million'] is not None and profile['output_price_per_million'] is not None and isinstance(usage.get('prompt_tokens'),int) and isinstance(usage.get('completion_tokens'),int):
             group['attempts'][-1]['estimated_cost']=(usage['prompt_tokens']*profile['input_price_per_million']+usage['completion_tokens']*profile['output_price_per_million'])/1000000
         save(path,latest)
         return envelope('translation','review_required',group,job_id=run_id)

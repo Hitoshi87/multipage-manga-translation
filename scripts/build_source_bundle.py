@@ -15,7 +15,7 @@ DIRECTORIES = ('manga_ai', 'docs', '.github')
 FILES = (
     'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', '.gitignore', '.gitattributes', '.editorconfig',
     'Photoshop_Typeset.jsx', 'Photoshop_CheckPython.jsx',
-    'manga_typesetter.py', 'manga_scan.py', 'setup_macos.command',
+    'manga_typesetter.py', 'manga_scan.py', 'setup_macos.command', 'setup.py', 'setup_windows.cmd', 'setup_linux.sh',
     'models/NOTICE.md', 'models/README.md', 'models/manifest.json',
     'demo_project/pages/001_page1/original.png',
     'demo_project/pages/001_page1/bubbles.tsv',
@@ -30,7 +30,7 @@ FILES = (
     'tests/fixtures/honorific_cases.json',
 )
 SCRIPTS = (
-    'core.jsxinc', 'lettering_styles.jsxinc', 'style_manager.jsxinc', 'repair.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
+    'core.jsxinc', 'lettering_styles.jsxinc', 'style_manager.jsxinc', 'dialogue_policy.jsxinc', 'repair.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
     'clean_generated.py', 'compact_png_cache.py', 'setup_ai.py', 'setup_aot.py', 'setup_assist_models.py',
     'setup_heavy_assist.py', 'setup_preview_models.py',
     'audit_fill_color.py', 'bubble_crop_compare.py', 'bubble_decision_trace.py', 'benchmark_ocr.py',

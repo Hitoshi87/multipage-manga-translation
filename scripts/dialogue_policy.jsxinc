@@ -1,0 +1,44 @@
+/* User-authored series translation rules. No credentials or inferred identities. */
+var MTADialogue=(function(){
+    var fields=['general_prompt','style_prompt','localization_policy','glossary','address_policy'];
+    function name(value){return String(value||'').replace(/\s+/g,' ').replace(/^\s+|\s+$/g,'');}
+    function entry(value){
+        if(value.dialogue_review!==undefined&&typeof value.dialogue_review!=='boolean')throw Error('Cấu hình kiểm tra ngữ cảnh cần bật hoặc tắt.');
+        var out={name:name(value.name),dialogue_review:value.dialogue_review!==false};
+        if(!out.name||out.name.length>200)throw Error('Nhập tên bộ truyện (tối đa 200 ký tự).');
+        for(var i=0;i<fields.length;i++){
+            var key=fields[i],limit=key==='glossary'?12000:6000,text=value[key]===undefined?'':value[key];
+            if(typeof text!=='string'||text.length>limit)throw Error(key+' cần là văn bản, tối đa '+limit+' ký tự.');out[key]=text;
+        }
+        return out;
+    }
+    function library(data){
+        if(!data||data.schema!==1||!(data.profiles instanceof Array)||data.profiles.length>500)throw Error('Thư viện văn phong không hợp lệ.');
+        var out={schema:1,profiles:[]},seen={};
+        for(var i=0;i<data.profiles.length;i++){var p=entry(data.profiles[i]),key='$'+p.name.toLowerCase();if(seen[key])throw Error('Tên bộ truyện bị lặp.');seen[key]=true;out.profiles.push(p);}return out;
+    }
+    function find(data,series){var key=name(series).toLowerCase();for(var i=0;i<data.profiles.length;i++)if(data.profiles[i].name.toLowerCase()===key)return data.profiles[i];return null;}
+    function merge(prior,hasRun,saved){
+        var out={},k;for(k in prior)out[k]=prior[k];
+        if(!hasRun){if(saved){for(var i=0;i<fields.length;i++)out[fields[i]]=saved[fields[i]];out.dialogue_review=saved.dialogue_review;}
+            else if(out.dialogue_review===undefined)out.dialogue_review=true;}
+        return out;
+    }
+    function edit(initial,save){
+        var current=entry(initial),d=new Window('dialog','Văn phong và xưng hô theo bộ truyện');d.orientation='column';d.alignChildren='fill';
+        function field(label,text,multi){d.add('statictext',undefined,label);var e=d.add('edittext',undefined,text,multi?{multiline:true,scrolling:true}:{});e.preferredSize=multi?[650,58]:[650,24];return e;}
+        var series=field('Tên bộ truyện (dùng cùng tên cho các vol)',current.name,false);
+        var context=field('Bối cảnh đã biết; không ghi tình tiết chưa tới',current.general_prompt,true);
+        var style=field('Văn phong tiếng Việt',current.style_prompt||'Tự nhiên, sát nghĩa; giữ giọng riêng của từng nhân vật.',true);
+        var policy=field('Quy tắc xưng hô theo chiều người nói → người nghe',current.address_policy,true);
+        policy.helpTip='Ví dụ: A nói với B: A xưng tớ, gọi B là cậu. B nói với A: B xưng tôi, gọi A là cậu. Chỉ ghi quan hệ bạn đã xác nhận; không áp một cặp cho mọi nhân vật.';
+        var glossary=field('Tên nhân vật / thuật ngữ đã chốt',current.glossary,true);
+        var review=d.add('checkbox',undefined,'Kiểm tra lại ngữ cảnh/xưng hô sau mỗi nhóm (thêm 1 lượt API)');review.value=current.dialogue_review;
+        d.add('statictext',undefined,'Lưu cho vol/project mới. Lượt đang tiếp tục giữ quy tắc cũ để tránh thay cấu hình giữa chừng.');
+        var message=d.add('statictext',undefined,'');message.characters=85;
+        var buttons=d.add('group');buttons.alignment='right';var ok=buttons.add('button',undefined,'Lưu');buttons.add('button',undefined,'Hủy',{name:'cancel'});
+        ok.onClick=function(){try{var result=entry({name:series.text,general_prompt:context.text,style_prompt:style.text,address_policy:policy.text,glossary:glossary.text,localization_policy:current.localization_policy,dialogue_review:review.value});save(result);d.close(1);}catch(e){message.text=String(e.message||e);}};
+        d.show();
+    }
+    return {entry:entry,library:library,find:find,merge:merge,edit:edit};
+})();

@@ -20,7 +20,10 @@ REASONS = {
     'page_failed': (FIX, 'Trang này chưa làm xong (lỗi khi xử lý)'),
     'clean_skipped': (FIX, 'Chưa xoá được chữ gốc ở bong bóng này'),
     'manual_text': (FIX, 'Chữ đang ẩn, cần xoá chữ gốc bằng tay'),
-    'layout_fallback': (FIX, 'Chữ không vừa khung nên đang đặt tạm'),
+    'layout_fallback': (FIX, 'Chữ chưa vừa khung; cần dàn lại (layer có thể đang ẩn)'),
+    'at_min_size': (LOOK, 'Bóng hẹp hoặc câu dài, đã dùng cỡ chữ nhỏ; kiểm tra độ dễ đọc'),
+    'small_vs_page': (LOOK, 'Cỡ chữ nhỏ hơn các bóng khác trên trang'),
+    'low_fill': (NOTE, 'Chữ còn thưa trong bóng thoại'),
     'geometry_clipped': (LOOK, 'Vùng xoá vượt lòng bong bóng; phần vượt đã được giữ lại, cần kiểm tra chữ sót'),
     'lettering_needs_review': (LOOK, 'Có đề xuất rút gọn cần đối chiếu nghĩa trước khi dùng'),
     'merged_suspect': (FIX, 'Nghi hai bong bóng bị gộp thành một'),
@@ -31,6 +34,9 @@ REASONS = {
     'ocr_suspect': (LOOK, 'Máy có thể đọc sai chữ Nhật'),
     'needs_review': (LOOK, 'Máy chưa chắc bản dịch; cần đối chiếu nguồn'),
     'speaker_unclear': (LOOK, 'Chưa rõ ai nói với ai (cách xưng hô)'),
+    'address_terms_changed': (LOOK, 'Lượt kiểm tra ngữ cảnh đã sửa cách xưng hô; cần duyệt quan hệ người nói/người nghe'),
+    'dialogue_review_failed': (LOOK, 'Lượt kiểm tra xưng hô chưa chạy được; bản dịch ban đầu được giữ lại'),
+    'dialogue_review_skipped': (LOOK, 'Nhóm quá dài để kiểm tra xưng hô thêm; cần rà soát bản dịch'),
     'ambiguous_reference': (NOTE, 'Câu có chỗ mơ hồ'),
     'glossary_conflict': (LOOK, 'Tên hoặc thuật ngữ chưa thống nhất'),
     'quote_cross_batch': (LOOK, 'Câu nhắc lại từ nhóm trước; kiểm tra hai bản dịch có nhất quán'),
@@ -84,6 +90,9 @@ def collect_items(log, texts):
             add(region, 'geometry_clipped')
         for entry in page.get('layout_fallback', []):
             add(entry['id'] if isinstance(entry, dict) else entry, 'layout_fallback')
+        for entry in page.get('layout_review', []):
+            for flag in entry.get('flags', []):
+                add(entry['id'], flag)
         for region in page.get('art_inpaint_review', []):
             add(region, 'art_inpaint')
         for region in page.get('contrast_review', []):

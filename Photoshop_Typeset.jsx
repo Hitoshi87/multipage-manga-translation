@@ -2,9 +2,10 @@
 #include "scripts/json.jsxinc"
 #include "scripts/lettering_styles.jsxinc"
 #include "scripts/style_manager.jsxinc"
+#include "scripts/dialogue_policy.jsxinc"
 #include "scripts/core.jsxinc"
 #include "scripts/repair.jsxinc"
-/* Manga Typesetter — UI 1107-ui.5. File > Scripts > Browse. UTF-8. */
+/* Manga Typesetter — UI 1107-ui.6. File > Scripts > Browse. UTF-8. */
 (function () {
     var root = new File($.fileName).parent;
     var supervisedPath=$.global.MTA_SUPERVISED_JOB || null, supervisedResult=$.global.MTA_SUPERVISED_RESULT || null;
@@ -131,10 +132,10 @@
         var autoSize = typesetTab.add('checkbox', undefined, 'Cỡ chữ lớn tự động theo bubble (tối đa 1,3× cỡ trung vị của trang)');
         autoSize.value = true;
         var sizingRow=typesetTab.add('group');sizingRow.add('statictext',undefined,'Cỡ toàn truyện:');
-        var sizePolicy=sizingRow.add('dropdownlist',undefined,['Tự do theo bong bóng','Đồng đều ±10%','Cố định tuyệt đối']);sizePolicy.selection=1;
+        var sizePolicy=sizingRow.add('dropdownlist',undefined,['Tự do theo bong bóng','Đồng đều, co khi bóng hẹp','Cố định tuyệt đối']);sizePolicy.selection=1;
         var standardSize=sizingRow.add('edittext',undefined,'18');standardSize.characters=5;
         sizingRow.add('statictext',undefined,'px chuẩn (trang 1008×1440)');
-        standardSize.helpTip='Một cỡ dùng cho mọi trang và bong bóng; ảnh 3024×4320 tự nhân 3. Cố định tuyệt đối: câu không vừa được đánh dấu cần rút gọn.';
+        standardSize.helpTip='Một cỡ chuẩn cho mọi trang; ảnh 3024×4320 tự nhân 3. Đồng đều ưu tiên ±10%, nhưng bóng hẹp được giảm thêm đến 65% để không tràn chữ. Cố định tuyệt đối không giảm cỡ; câu không vừa được đánh dấu cần rút gọn.';
         var uppercaseText = typesetTab.add('checkbox', undefined, 'In hoa chữ khi typeset (không đổi bản dịch đã lưu)');
         var fontSettingsFile = new File(Folder.userData.fsName + '/MangaTypesetterLite/font_profiles.json');
         function chooseFontById(control, id) {
@@ -184,6 +185,23 @@
         }
         manageStyles.onClick=easyManageStyles.onClick=editSeriesStyles;
         refillSeriesStyles(null);
+        var dialogueFile=new File(Folder.userData.fsName+'/MangaTypesetterLite/dialogue_profiles.json'),dialogueLibrary={schema:1,profiles:[]},dialogueLoadError='';
+        try{if(dialogueFile.exists)dialogueLibrary=MTADialogue.library(MJSON.parse(MTA.read(dialogueFile)));}catch(dialogueError){dialogueLoadError=String(dialogueError.message||dialogueError);}
+        var dialoguePolicyButton=easyStyleRow.add('button',undefined,'Văn phong / xưng hô');
+        function dialogueSeriesName(){var selected=selectedStyleProfile();return selected?selected.name:easyName.text;}
+        dialoguePolicyButton.onClick=function(){
+            if(dialogueLoadError){alert('Không đọc được thư viện văn phong; chưa ghi đè file cũ. '+dialogueLoadError);return;}
+            try{
+                var name=dialogueSeriesName(),saved=MTADialogue.find(dialogueLibrary,name);
+                MTADialogue.edit(saved||{name:name,dialogue_review:true},function(value){
+                    var next={schema:1,profiles:[]},found=false;
+                    for(var i=0;i<dialogueLibrary.profiles.length;i++){var p=dialogueLibrary.profiles[i];if(p.name.toLowerCase()===value.name.toLowerCase()){next.profiles.push(value);found=true;}else next.profiles.push(p);}
+                    if(!found)next.profiles.push(value);next=MTADialogue.library(next);
+                    MTA.mkdir(dialogueFile.parent.fsName);MTA.writeCheckpoint(dialogueFile,MJSON.stringify(next));dialogueLibrary=next;
+                    status.text='Đã lưu văn phong và xưng hô: '+value.name+'. Dùng cho vol/project mới.';
+                });
+            }catch(e){alert(String(e.message||e));}
+        };
         var exportRow = typesetTab.add('group');
         var setOutput = exportRow.add('button', undefined, 'Thư mục lưu');
         var outInfo = exportRow.add('statictext', undefined, outputFolder.fsName); outInfo.characters = 42;
@@ -225,7 +243,7 @@
         var bottom = win.add('group'); bottom.alignment = 'right';
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
-        var controls = [seriesStyles, easySeriesStyles, manageStyles, easyManageStyles, chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, sizePolicy, standardSize, leadingAuto,
+        var controls = [dialoguePolicyButton, seriesStyles, easySeriesStyles, manageStyles, easyManageStyles, chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, sizePolicy, standardSize, leadingAuto,
                         minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, repairExisting, renameNames, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         repairExisting.onClick=function(){var folder=Folder.selectDialog('Chọn thư mục PDF/PSD đã xuất, có checkpoint draft_*.json');if(!folder)return;
             run(function(){var sizing=options(),result=MTARepair.runFolder(folder,tick,{sizing:{sizePolicy:sizing.sizePolicy,standardSize:sizing.standardSize}}),done=0,failed=0;
@@ -373,6 +391,7 @@
         }
         function options(doc) {
             var result = {font: fontIds[font.selection.index], fonts: {dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index]}, automatic: autoRoles.value, uppercase: uppercaseText.value, autoSize: autoSize.value, min: Number(minSize.text), max: Number(maxSize.text), autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.30 : Number(leading.text)};
+            result.autoLayout=true;
             result.sizePolicy=['adaptive','uniform','fixed'][sizePolicy.selection?sizePolicy.selection.index:1];
             if (!(result.leading >= 1 && result.leading <= 2.5) || (result.sizePolicy==='adaptive' && !(result.min >= 4 && result.max >= result.min && result.max <= 250)))
                 throw Error('Cỡ chuẩn cần 4–250, min ≤ max; giãn dòng cần 1–2.5.');
@@ -735,7 +754,7 @@
                             if (prefined) { var pwith = {}, prk; for (prk in pregion) pwith[prk] = pregion[prk]; pwith.shape = prefined; pregion = pwith; }
                             dryConfig.fontRole=MTA.resolveTextRole(pregion, s.mapping[pj].translation, s.mapping[pj].font_role, config.automatic);
                             dryConfig.font = config.fonts[dryConfig.fontRole];
-                            try { MTA.addText(copy, copy, pregion, s.mapping[pj].translation, dryConfig); } catch (_) {}
+                            try { MTA.addBubbleText(copy, copy, pregion, s.mapping[pj].translation, dryConfig); } catch (_) {}
                             var info = MTA.lastLayout();
                             if (info && info.id === pregion.id) sizes.push(info.size);
                         }
@@ -752,13 +771,16 @@
                         if (refinedShape) { var withShape = {}, rk; for (rk in region) withShape[rk] = region[rk]; withShape.shape = refinedShape; region = withShape; }
                         var role = MTA.resolveTextRole(region, (s.mapping[j].display || s.mapping[j].translation), s.mapping[j].font_role, config.automatic);
                         config.fontRole=role;config.font = config.fonts[role];
-                        var textLayer;
-                        try { textLayer = MTA.addText(copy, group, region, (s.mapping[j].display || s.mapping[j].translation), config); var placed=MTA.lastLayout(); if(placed){placed.layer=textLayer;layoutInfos.push(placed);} }
+                        var textLayer,layoutFailed=false;
+                        try { textLayer = MTA.addBubbleText(copy, group, region, (s.mapping[j].display || s.mapping[j].translation), config); var placed=MTA.lastLayout(); if(placed){placed.layer=textLayer;layoutInfos.push(placed);} }
                         catch (fitError) {
+                            layoutFailed=true;
                             if (!s.visibleFallback && !result.experimental && !s.draft) throw fitError;
                             var safe = region.safe;
                             textLayer = MTA.addFallbackText(copy, group, s.mapping[j].translation, config,
-                                [safe[0]+safe[2]/2, safe[1]+safe[3]/2], '[CẦN RÚT GỌN/CHỈNH KHUNG] ' + region.id + ' | ' + s.mapping[j].translation.substr(0,40), Math.max(safe[2], copy.width.as('px')*.16));
+                                [safe[0]+safe[2]/2, safe[1]+safe[3]/2], '[CẦN RÚT GỌN/CHỈNH KHUNG] ' + region.id + ' | ' + s.mapping[j].translation.substr(0,40), safe[2]);
+                            // Unfitted text stays editable but must not cover artwork.
+                            textLayer.visible=false;textLayer.name='[CHỮ ẨN — KHÔNG VỪA BUBBLE] '+textLayer.name;
                             s.layoutFallback.push({id:region.id, reason:String(fitError.message || fitError)});
                         }
                         textLayer.name = '[' + ({dialogue:'THOẠI',box:'Ô VUÔNG',shout:'HÉT'})[role] + '] ' + (region.merged_suspect ? '[NGHI GỘP Ô — CẦN TÁCH] ' : '') + textLayer.name;
@@ -771,6 +793,7 @@
                             if (!s.visibleFallback && !result.experimental) textLayer.visible = false;
                             s.manualText.push(region.id);
                         }
+                        if(layoutFailed)textLayer.visible=false;
                     }
                     // Flag cramped or sparse lettering so review starts there.
                     var flagged=MTA.layoutFlags(layoutInfos,{min:config.min,max:config.max});
@@ -808,7 +831,7 @@
                 var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:colorModeIndex() === 2}, onlyClean ? 'clean' : (s.chapterOutput?'chapter':(s.draft?'draft':'typeset')), s.savedFiles) : null;
                 if(saved && !onlyClean){
                     var lettering={schema:1,options:config,regions:{}};
-                    for(var si=0;si<layoutInfos.length;si++){var info=layoutInfos[si];lettering.regions['$'+info.id]={styleId:info.styleId,text:info.sourceText};}
+                    for(var si=0;si<layoutInfos.length;si++){var info=layoutInfos[si];lettering.regions['$'+info.id]={styleId:info.styleId,text:info.sourceText,layout:info.selection,sizeException:info.sizeException||null,renderedText:info.content};}
                     for(var format in s.savedFiles)if(/\.(psd|pdf)$/i.test(s.savedFiles[format]))MTA.writeCheckpoint(new File(s.savedFiles[format]+'.lettering.json'),MJSON.stringify(lettering));
                 }
                 if (!keepOpen) { copy.close(SaveOptions.DONOTSAVECHANGES); copy = null; }
@@ -972,7 +995,7 @@
                         if(!found)throw Error('Thiếu mapping trang');var mf=new File(found.manifest),saved=MJSON.parse(MTA.read(mf));MTA.validateManifest(saved,d.width.as('px'),d.height.as('px'));
                         var s={doc:d,folder:mf.parent,manifestPath:mf.fsName,data:saved,mapping:found.mapping,reviewLines:[],allowOmitted:true,offline:false,engine:chosen,draft:true,chapterOutput:!!cfg.streamLimit,draftReview:found.review};
                         build(s,false,true,false);var priority=[];for(var pr=0;pr<found.review.length;pr++)if(found.review[pr].priority==='high')priority.push(found.review[pr]);
-                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,reading_order_review:layoutWarnings[found.page_id]||null,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
+                        log.push({page:found.page_id,manifest:found.manifest,status:'draft',engine:chosen,required:found.required_count,mapped:found.mapping.length,priority_review:priority,review:found.review,reading_order_review:layoutWarnings[found.page_id]||null,clean_skipped:s.cleanResult.skipped,clean_applied:(s.cleanResult.applied||[]).length,clean_layers:s.cleanLayerCount||0,geometry_clipped:s.cleanResult.geometry_clipped||{},art_inpaint_review:s.cleanResult.art_inpaint_ids || [],manual_text:s.manualText,layout_fallback:s.layoutFallback,contrast_review:s.contrastReview,layout_review:s.layoutReview,files:s.savedFiles,pdf_mb:s.savedFiles&&s.savedFiles.pdf?fileMb(s.savedFiles.pdf):null,psd_mb:s.savedFiles&&s.savedFiles.psd?fileMb(s.savedFiles.psd):null});
                     }catch(be){if(be.workerUnresponsive)throw be;log.push({page:decodeURI(sources[bi].name),status:'failed',error:String(be.message||be)});}
                     finally{if(owned&&d)d.close(SaveOptions.DONOTSAVECHANGES);if(owned && app.documents && app.documents.length===0){try{app.purge(PurgeTarget.ALLCACHES);}catch(_){} try{$.gc();}catch(_){}}}
                     var logFile=new File(outputFolder.fsName+'/draft_'+run.id+'.json');MTA.writeCheckpoint(logFile,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,blocked_source_ids:current.blocked_ids,remaining_groups:remaining,translation_failures:failed,pages:log}));
@@ -1134,6 +1157,7 @@
             if(sidecar.exists){snapshot=MJSON.parse(MTA.read(sidecar));if(snapshot.schema!==1||!snapshot.options)throw Error('Dữ liệu style của trang không hợp lệ.');}
             var cfg=snapshot?MTAStyles.copy(snapshot.options):options(at.doc);
             if(cfg.styleProfile)cfg.styleProfile=MTAStyles.profile(cfg.styleProfile);
+            cfg.autoLayout=true;
             var role=/\[(Ô VUÔNG)\]/.test(old.name)?'box':(/\[(HÉT)\]/.test(old.name)?'shout':'dialogue');
             cfg.fontRole=role;cfg.font=cfg.fonts[role];
             var prior=snapshot&&snapshot.regions&&snapshot.regions['$'+item.region];
@@ -1149,7 +1173,7 @@
             var context=reviewContext(item,chosenStyleId),at=context.at,old=context.old,cfg=context.options;
             cfg.lineCount=lineCount||0;
             var cut=old.name.indexOf(item.region+' |'),prefix=cut>0?old.name.substr(0,cut):'';
-            var created=MTA.addText(at.doc,context.group,context.region,newText,cfg),placed=MTA.lastLayout();
+            var created=MTA.addBubbleText(at.doc,context.group,context.region,newText,cfg),placed=MTA.lastLayout();
             try{
                 created.name=prefix+item.region+' | '+newText.substr(0,40).replace(/[\r\n]/g,' ');created.visible=old.visible;
                 if(/AI PHỤC HỒI/.test(old.name) && !MTA.addWhiteStroke(at.doc,created,Math.max(1,Math.min(4,at.doc.width.as('px')/480))))throw Error('Không tạo được viền tương phản.');
@@ -1158,7 +1182,7 @@
             }catch(e){old.visible=created.visible;created.remove();throw e;}
             old.remove();reviewSave(at.doc);
             var snapshot=context.snapshot||{schema:1,options:cfg,regions:{}};
-            snapshot.regions=snapshot.regions||{};snapshot.regions['$'+item.region]={styleId:placed&&placed.styleId||null,text:newText,lineCount:lineCount||0};
+            snapshot.regions=snapshot.regions||{};snapshot.regions['$'+item.region]={styleId:placed&&placed.styleId||null,text:newText,lineCount:lineCount||0,layout:placed&&placed.selection||null,renderedText:placed&&placed.content||null};
             MTA.writeCheckpoint(context.sidecar,MJSON.stringify(snapshot));
             try{if(item.segment_id&&runId)rpc({operation:'translation_accept',project:project,run_id:runId,edits:[{id:item.segment_id,text:newText}]});}catch(_){}
         }
@@ -1222,7 +1246,8 @@
                 proposals=MTA.suggestLayouts(context.at.doc,context.region,textBox.text,context.options);
                 if(!proposals.length)throw Error('Không có phương án vừa vùng chữ. Hãy rút gọn hoặc đổi style.');
                 for(var i=0;i<proposals.length;i++)variants.add('item',proposals[i].lines+' dòng · '+Math.round(proposals[i].size*10)/10+' px — '+proposals[i].text.replace(/\n/g,' / '));
-                msg.text='Có '+proposals.length+' phương án. Chọn để xem; bấm Áp dụng để đo lại, thay chữ và lưu.';
+                variants.selection=0;variants.onChange();
+                msg.text='Đã chọn phương án ưu tiên trong '+proposals.length+' phương án. Bấm Áp dụng để đo lại và lưu; có thể chọn phương án khác.';
             });};
             variants.onChange=function(){if(!variants.selection)return;chosenProposal=proposals[variants.selection.index];textBox.text=chosenProposal.text;};
             function guard(fn){try{fn();}catch(e){msg.text='Lỗi: '+String(e.message||e);}}
@@ -1306,6 +1331,8 @@
             var style=field('Văn phong tiếng Việt',prior.style_prompt || 'Tự nhiên, sát nghĩa.',true);
             var localization=field('Quy tắc Việt hóa',prior.localization_policy,true);
             var glossary=field('Glossary / nhân vật',prior.glossary,true);
+            var addressPolicy=field('Quy tắc xưng hô theo cặp nhân vật (chỉ quan hệ đã xác nhận)',prior.address_policy,true);
+            var dialogueReview=dlg.add('checkbox',undefined,'Kiểm tra ngữ cảnh/xưng hô thêm sau mỗi nhóm (thêm 1 lượt API)');dialogueReview.value=prior.dialogue_review!==false;
             var stripJapaneseSuffixes=dlg.add('checkbox',undefined,'Tự bỏ hậu tố Nhật -san/-kun/-chan… trong bản dịch mới');stripJapaneseSuffixes.value=prior.strip_honorifics!==false;
             var url=field('API base URL',prior.base_url || 'https://api.vilao.ai/v1',false);
             var model=field('Model ID',prior.model || 'deepseek-ai/deepseek-v4.1-flash-1017',false);
@@ -1336,7 +1363,7 @@
             var stopVolume=dlg.add('button',undefined,'Dừng tại điểm an toàn');stopVolume.enabled=false;
             action.add('button',undefined,'Đóng',{name:'cancel'});
             var note=dlg.add('statictext',undefined,'',{multiline:true});note.preferredSize=[700,44];
-            function profile(){return {series_name:series.text,general_prompt:general.text,style_prompt:style.text,localization_policy:localization.text,glossary:glossary.text,base_url:url.text,model:model.text,key_env:keyEnv.text,max_tokens:Number(tokens.text),group_size:Number(groupSize.text),max_input_chars:Number(inputLimit.text),context_segments:Number(contextLimit.text),timeout:Number(timeout.text),retries:Number(retries.text),input_price_per_million:priceIn.text?Number(priceIn.text):null,output_price_per_million:priceOut.text?Number(priceOut.text):null,json_mode:jsonMode.value,thinking:thinking.selection.text,vision_mode:vision.selection.text,auto_accept:autoAccept.value,strip_honorifics:stripJapaneseSuffixes.value===true};}
+            function profile(){return {series_name:series.text,general_prompt:general.text,style_prompt:style.text,localization_policy:localization.text,glossary:glossary.text,address_policy:addressPolicy.text,dialogue_review:dialogueReview.value,base_url:url.text,model:model.text,key_env:keyEnv.text,max_tokens:Number(tokens.text),group_size:Number(groupSize.text),max_input_chars:Number(inputLimit.text),context_segments:Number(contextLimit.text),timeout:Number(timeout.text),retries:Number(retries.text),input_price_per_million:priceIn.text?Number(priceIn.text):null,output_price_per_million:priceOut.text?Number(priceOut.text):null,json_mode:jsonMode.value,thinking:thinking.selection.text,vision_mode:vision.selection.text,auto_accept:autoAccept.value,strip_honorifics:stripJapaneseSuffixes.value===true};}
             function loadProject(){return rpc({operation:'translation_load',project:project});}
             function latestRun(data){if(!data.runs.length)throw Error('Chưa có lượt dịch');return data.runs[data.runs.length-1];}
             var volumeRunning=false;
@@ -1346,7 +1373,7 @@
                 runVolume({project:project,profile:profile(),title:'Báo cáo: '+(series.text||'bộ truyện'),note:function(t){note.text=t;}});
             }catch(e){alert(e.message);}finally{volumeRunning=false;activeTaskDialog=null;oneClick.enabled=true;draftReview.enabled=true;action.enabled=true;stopVolume.enabled=false;cancelled=false;dlg.update();}};
             saveProfile.onClick=function(){try{rpc({operation:'translation_profile',project:project,profile:profile()});note.text='Đã lưu profile theo revision.';}catch(e){alert(e.message);}};
-            sampleProfile.onClick=function(){try{var p=rpc({operation:'translation_preset',name:'mayonaka_sample'});series.text=p.series_name;general.text=p.general_prompt;style.text=p.style_prompt;localization.text=p.localization_policy;glossary.text=p.glossary;note.text='Đã điền mẫu từ trang 04–07; kiểm tra rồi bấm Lưu profile. Không tự tạo canon.';}catch(e){alert(e.message);}};
+            sampleProfile.onClick=function(){try{var p=rpc({operation:'translation_preset',name:'mayonaka_sample'});series.text=p.series_name;general.text=p.general_prompt;style.text=p.style_prompt;localization.text=p.localization_policy;glossary.text=p.glossary;addressPolicy.text=p.address_policy||'';dialogueReview.value=p.dialogue_review!==false;note.text='Đã điền mẫu từ trang 04–07; kiểm tra rồi bấm Lưu profile. Không tự tạo canon.';}catch(e){alert(e.message);}};
             previewPrompt.onClick=function(){try{
                 var p=rpc({operation:'translation_preview_prompt',project:project,profile:profile()});
                 var d=new Window('dialog','Prompt đã ghép');var t=d.add('edittext',undefined,p.prompt,{multiline:true,scrolling:true,readonly:true});t.preferredSize=[700,500];d.add('button',undefined,'Đóng',{name:'ok'});d.show();
@@ -1761,7 +1788,7 @@
         // Choose a folder, press Start, do something else. The machine tries three sample pages first
         // (a hopeless run is caught in minutes), then runs the whole volume unattended and reports.
         var EASY_KEY_ENV='MANGA_TRANSLATION_API_KEY', easyFolder=null, lastReportHtml=null, easySuggestedName='';
-        var easyIntro=easyTab.add('statictext',undefined,'Dịch và chèn chữ cả tập truyện. Chọn thư mục ảnh, bấm Bắt đầu rồi làm việc khác: máy tự thử 3 trang, tự chạy cả tập và báo khi xong. Bản gốc luôn được giữ nguyên.',{multiline:true});
+        var easyIntro=easyTab.add('statictext',undefined,'Dịch và chèn chữ cả tập truyện. Chọn thư mục ảnh, bấm Bắt đầu rồi làm việc khác: máy tự thử 3 trang, tự chọn cách xuống dòng, chạy cả tập và báo khi xong. Bản gốc luôn được giữ nguyên.',{multiline:true});
         easyIntro.preferredSize=[740,42];
         var easyFolderRow=easyTab.add('group');
         var easyChoose=easyFolderRow.add('button',undefined,'1. Chọn thư mục truyện');
@@ -1848,6 +1875,7 @@
             if(sel>0&&engines[sel-1])lines[2]='Xoá chữ: engine '+engines[sel-1].label+' ('+engines[sel-1].id+', '+engines[sel-1].version+')'+(engines[sel-1].ready?'':' — THIẾU MODEL');
             lines.push('Thứ tự đọc: '+(magiOrder.value?'MAGI':(koharuOrder.value?'Koharu':'OpenCV')));
             lines.push('Dịch: '+easyModelName.text+' qua '+easyHost.text+(easyMode.selection&&easyMode.selection.index===1?' (kèm ảnh vùng thoại; đọc cận số và cụm chữ Hán)':''));
+            lines.push('Xưng hô: nhớ thoại trước theo thứ tự; lượt kiểm tra thêm mặc định bật cho project mới (có thể tắt trong Văn phong / xưng hô).');
             var missing=[];for(var i=0;i<env.items.length;i++)if(!env.items[i].ok&&env.items[i].required)missing.push(env.items[i].label);
             easyPlan.text=(missing.length?'THIẾU: '+missing.join('; ')+'. Bấm "Kiểm tra môi trường" để xem cách sửa.\n':'Sẽ chạy:\n')+lines.join('\n');
         }
@@ -1885,10 +1913,12 @@
             return e;
         }
         function easyProfile(project,mode){
+            if(dialogueLoadError)throw Error('Không đọc được thư viện văn phong/xưng hô: '+dialogueLoadError);
             var prior={},st,k;
             try{st=rpc({operation:'translation_load',project:project});if(st.profiles.length)prior=st.profiles[st.profiles.length-1].values;}catch(profileError){if(profileError.workerUnresponsive)throw profileError;}
-            var p={};for(k in prior)p[k]=prior[k];
-            p.series_name=easyName.text;p.base_url=easyHost.text;p.model=easyModelName.text;
+            var seriesName=dialogueSeriesName(),saved=MTADialogue.find(dialogueLibrary,seriesName);
+            var p=MTADialogue.merge(prior,!!(st&&st.runs&&st.runs.length),saved);
+            p.series_name=seriesName;p.base_url=easyHost.text;p.model=easyModelName.text;
             p.group_size=7;p.max_tokens=24576;p.timeout=150;p.retries=1;p.json_mode=true;p.thinking='disabled';p.context_segments=prior.context_segments===undefined?6:prior.context_segments;
             p.vision_mode=mode===1?'target_crop':'off';p.key_env=p.key_env||EASY_KEY_ENV;p.auto_accept=false;
             return p;

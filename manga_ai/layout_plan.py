@@ -98,6 +98,9 @@ def wrap_scored(paragraphs, widths, measure):
 
 def plan_layout(shape, paragraphs, unit_width, ref_ratio, o):
     """Largest readable size for `paragraphs` inside `shape` (rows of [y, left, right])."""
+    if o.get('autoLayout') and not o.get('lineCount'):
+        ranked = layout_candidates(shape, paragraphs, unit_width, ref_ratio, o)
+        return ranked[0] if ranked else None
     rows = {r[0]: r for r in shape['rows']}
     area = sum(r[2] - r[1] for r in shape['rows'])
     max_width = max(r[2] - r[1] for r in shape['rows'])
@@ -214,6 +217,31 @@ def plan_layout(shape, paragraphs, unit_width, ref_ratio, o):
         if bigger and bigger['size'] > best['size'] and bigger['fill'] > best['fill']:
             best = bigger
     return best
+
+
+def layout_candidates(shape, paragraphs, unit_width, ref_ratio, o):
+    """Rank the same bounded set used by automatic Photoshop placement."""
+    cfg = dict(o, autoLayout=False)
+    base = plan_layout(shape, paragraphs, unit_width, ref_ratio, cfg)
+    if not base:
+        return []
+    result = [base]
+    seen = {tuple(base['lines'])}
+    if not o.get('lineCount'):
+        for offset in (1, -1, 2, -2, 3, -3):
+            cfg['lineCount'] = len(base['lines']) + offset
+            if not 1 <= cfg['lineCount'] <= 24:
+                continue
+            plan = plan_layout(shape, paragraphs, unit_width, ref_ratio, cfg)
+            if plan and tuple(plan['lines']) not in seen:
+                seen.add(tuple(plan['lines']))
+                result.append(plan)
+    largest = max(plan['size'] for plan in result)
+    for index, plan in enumerate(result):
+        plan['selectionScore'] = plan['quality'] + 1.2 * max(0, 1 - plan['size'] / largest)
+        plan['candidateOrder'] = index
+    result.sort(key=lambda plan: (plan['selectionScore'], plan['candidateOrder']))
+    return result
 
 
 def page_size_cap(sizes, factor, min_size):

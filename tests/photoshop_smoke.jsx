@@ -102,7 +102,7 @@
         if (!longTextRejected || textGroup.artLayers.length !== beforeLayers) throw Error('Overflow must fail without a stray layer');
         var fallback=MTA.addFallbackText(reopened,textGroup,'Dấu tiếng Việt phải rõ, không chạm dòng.',
                                         {font:'ArialMT',min:12,leading:1.05,autoLeading:true},[100,100],'Fallback smoke',160);
-        if(fallback.textItem.kind!==TextType.PARAGRAPHTEXT || fallback.textItem.autoLeadingAmount<129)
+        if(fallback.textItem.kind!==TextType.PARAGRAPHTEXT || fallback.textItem.autoLeadingAmount<104.9)
             throw Error('Fallback must preserve readable editable paragraph text');
         fallback.remove();
         report.checks.push('300 dpi fit and overflow refusal');

@@ -9,7 +9,8 @@
       "sha256": "88b84105ad2faec516fd164a2783fa6b6007dfd6ab07aa90e92b0241e51ea4cf",
       "size_bytes": 12465247,
       "profiles": [
-        "1107"
+        "1107",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -21,7 +22,8 @@
       "sha256": "b5022ad46416b6fe4f88b0cc082cfd2ff5b1cfc624088c2f19879485493f5913",
       "size_bytes": 43838857,
       "profiles": [
-        "1107"
+        "1107",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -34,7 +36,8 @@
       "size_bytes": 77035608,
       "profiles": [
         "1107",
-        "preview"
+        "preview",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -58,7 +61,8 @@
       "sha256": "de31ffa5ba26916b8ea35319f6c12151ff9654d4261bccf0583a69bb095315f9",
       "size_bytes": 206291843,
       "profiles": [
-        "preview"
+        "preview",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -83,7 +87,8 @@
       "size_bytes": 174671370,
       "profiles": [
         "1107",
-        "assist"
+        "assist",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -95,7 +100,8 @@
       "sha256": "1967ecef502e4c1e1e7c512ea0a2e06396b39ded87a8a9cc77bd7db2e981a361",
       "size_bytes": 52293486,
       "profiles": [
-        "assist"
+        "assist",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -107,7 +113,8 @@
       "sha256": "187a59cb61d3870f1f97c9eb027eb34ff19d023fba801cda113a13870be0b724",
       "size_bytes": 35133596,
       "profiles": [
-        "assist"
+        "assist",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -119,7 +126,8 @@
       "sha256": "46640b0b3db77f0f0eef660bbe5dc9126a5e0fb49eb2786b2edba7b0371d9769",
       "size_bytes": 34715466,
       "profiles": [
-        "assist"
+        "assist",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -131,7 +139,8 @@
       "sha256": "681de4eb83154a397af49e2ddae4705041b12a22e16fe00860b829e889e5f47c",
       "size_bytes": 130761,
       "profiles": [
-        "assist"
+        "assist",
+        "auto"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
     },
@@ -261,6 +270,97 @@
         "assist"
       ],
       "license_notice": "See models/NOTICE.md and upstream terms; no weights are redistributed in Git."
+    },
+    {
+      "id": "tessdata_eng",
+      "path": "tessdata/eng.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/eng.traineddata",
+      "size_bytes": 4113088,
+      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_jpn",
+      "path": "tessdata/jpn.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/jpn.traineddata",
+      "size_bytes": 2471260,
+      "sha256": "1f5de9236d2e85f5fdf4b3c500f2d4926f8d9449f28f5394472d9e8d83b91b4d",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_jpn_vert",
+      "path": "tessdata/jpn_vert.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/jpn_vert.traineddata",
+      "size_bytes": 3037480,
+      "sha256": "bf1e2640954691797e2dc14f38533e601b59ee37958698ae0f0b81dc6f09c71b",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_chi_sim",
+      "path": "tessdata/chi_sim.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/chi_sim.traineddata",
+      "size_bytes": 2469156,
+      "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_chi_tra",
+      "path": "tessdata/chi_tra.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/chi_tra.traineddata",
+      "size_bytes": 2366642,
+      "sha256": "529c5b5797d64b126065cd55f2bb4c7fd7b15790798091b1ff259941a829330b",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_kor",
+      "path": "tessdata/kor.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/kor.traineddata",
+      "size_bytes": 1677415,
+      "sha256": "6b85e11d9bbf07863b97b3523b1b112844c43e713df8b66418a081fd1060b3b2",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
+    },
+    {
+      "id": "tessdata_vie",
+      "path": "tessdata/vie.traineddata",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/vie.traineddata",
+      "size_bytes": 531275,
+      "sha256": "79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1",
+      "profiles": [
+        "tessdata",
+        "auto"
+      ],
+      "revision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "license_notice": "Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE"
     }
   ]
 }

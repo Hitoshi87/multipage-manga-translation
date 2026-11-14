@@ -74,13 +74,12 @@ def check_cancel(path):
 
 
 def tesseract_path():
-    candidates = [os.environ.get("TESSERACT_CMD"), shutil.which("tesseract"),
-                  "/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract"]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            pytesseract.pytesseract.tesseract_cmd = candidate
-            return candidate
-    raise RuntimeError("Thiếu Tesseract. Chạy setup_macos.command --install")
+    from .ocr_runtime import find_tesseract
+    executable = find_tesseract()
+    if not executable:
+        raise RuntimeError("Thiếu Tesseract. Xem docs/runtime/installation.md; có thể đặt TESSERACT_CMD tới tesseract.exe.")
+    pytesseract.pytesseract.tesseract_cmd = executable
+    return executable
 
 
 def read_image(path):

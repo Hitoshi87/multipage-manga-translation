@@ -120,7 +120,7 @@ var MTARepair=(function(){
         options=options||{};var rules=options.names?nameRules(options.names):null;
         if(Math.abs(doc.width.as('px')-manifest.width)>2 || Math.abs(doc.height.as('px')-manifest.height)>2)
             throw Error('Kích thước trang đã đổi; cần duyệt lại tọa độ thoại.');
-        var layers=[],result={fixed:0,replacements:0,honorifics:0,trimmed:0,errors:[],counts:[]};
+        var layers=[],result={fixed:0,replacements:0,honorifics:0,trimmed:0,errors:[],counts:[],layouts:[]};
         for(var rule=0;rules && rule<rules.length;rule++)result.counts.push(0);
         function collect(group){for(var i=0;i<group.layers.length;i++){
             var layer=group.layers[i];if(layer.typename==='LayerSet')collect(layer);
@@ -130,7 +130,7 @@ var MTARepair=(function(){
         result.unchanged=!layers.length && (!manifest.regions.length || options.allowEmpty===true);
         if(!layers.length && !result.unchanged)throw Error('Không có layer thoại của tool; PDF có thể đã flatten.');
         for(var i=0;i<layers.length;i++){
-            var old=layers[i],id=old.name.match(/B\d{3}(?=\s*\|)/)[0],region=null,fit=null,replacement=null;
+            var old=layers[i],id=old.name.match(/B\d{3}(?=\s*\|)/)[0],region=null,fit=null,replacement=null,wasVisible=old.visible,wasOpacity=old.opacity;
             if(tick && tick('Sửa khung thoại '+id)===false)throw Error('Đã hủy');
             try{
                 var content=old.textItem.contents.replace(/\r\n|\r|\n/g,' '),renamed=rules?replaceNames(content,rules,options):null;
@@ -139,14 +139,16 @@ var MTARepair=(function(){
                 for(var j=0;j<manifest.regions.length;j++)if(manifest.regions[j].id===id)region=manifest.regions[j];
                 if(!region)throw Error('Không tìm thấy vùng thoại '+id);
                 var t=old.textItem,size=t.size.as('pt')*doc.resolution/72;
-                var fitOptions={font:t.font,min:Math.max(4,size*.5),max:Math.max(4,size),leading:1.3,autoLeading:true,caseMode:'keep',sparseBoost:1};
+                var fitOptions={font:t.font,min:Math.max(4,size*.5),max:Math.max(4,size),leading:1.3,autoLeading:true,caseMode:'keep',sparseBoost:1,autoLayout:true,
+                    tracking:t.tracking||0,fauxBold:t.fauxBold===true,fauxItalic:t.fauxItalic===true};
                 if(options.sizing && options.sizing.sizePolicy!=='adaptive'){
                     fitOptions.sizePolicy=options.sizing.sizePolicy;fitOptions.standardSize=options.sizing.standardSize;
                     fitOptions=MTA.letteringSizeOptions(fitOptions,Math.max(1,Math.min(doc.width.as('px')/1008,doc.height.as('px')/1440)));
                 }
-                fit=MTA.addText(doc,old.parent,region,content,fitOptions);
+                fit=MTA.addBubbleText(doc,old.parent,region,content,fitOptions);var layout=MTA.lastLayout();
                 // Retain the original colour, layer effects, visibility and opacity.
                 replacement=old.duplicate();var dest=replacement.textItem,src=fit.textItem;
+                replacement.visible=wasVisible;replacement.opacity=wasOpacity;
                 dest.kind=TextType.PARAGRAPHTEXT;dest.size=src.size;
                 dest.justification=Justification.CENTER;dest.useAutoLeading=src.useAutoLeading;
                 if(src.useAutoLeading)dest.autoLeadingAmount=src.autoLeadingAmount;else dest.leading=src.leading;
@@ -160,11 +162,18 @@ var MTARepair=(function(){
                 b=inkBounds(replacement);
                 for(var c=0;c<4;c++)if(Math.abs(a[c]-b[c])>2)throw Error('Không căn khớp được khung thoại; giữ nguyên layer.');
                 replacement.name=renamed?old.name.replace(/\|[\s\S]*$/,'| '+content.substr(0,40)):old.name;
+                replacement.name=replacement.name.replace(/\[CẦN RÚT GỌN\/CHỈNH KHUNG\]\s*/g,'');
+                // Photoshop can reveal a hidden text layer while its contents
+                // or paragraph properties are edited. Restore visibility last.
+                replacement.visible=/CẦN CLEAN[^\]]*CHỮ ẨN/.test(old.name)?false:wasVisible;
+                replacement.opacity=wasOpacity;
                 fit.remove();fit=null;old.remove();replacement=null;result.fixed++;
+                if(layout)result.layouts.push(layout);
                 if(renamed){result.replacements+=renamed.count;result.honorifics+=renamed.honorifics;result.trimmed+=renamed.trimmed;
                     for(var n=0;n<renamed.counts.length;n++)result.counts[n]+=renamed.counts[n];}
             }catch(e){
                 if(fit)fit.remove();if(replacement)replacement.remove();
+                try{old.visible=wasVisible;}catch(_){}
                 result.errors.push({id:id,error:String(e.message||e)});
             }
         }
@@ -176,7 +185,7 @@ var MTARepair=(function(){
         if(rules && !rules.length && !(options.stripHonorifics && options.allNames))throw Error('Hãy nhập ít nhất một cặp tên hoặc bật bỏ kính ngữ mọi tên.');
         var items=inventory(folder),out=MTA.mkdir(folder.fsName+(rules?'/DOI_TEN':'/SUA_THOAI')),
             logFile=new File(out.fsName+(rules?'/rename_log.json':'/repair_log.json'));
-        var log={revision:rules?'names-v3':'paragraph-v1',names:rules,stripHonorifics:options.stripHonorifics===true,allNames:options.allNames===true,pages:[],cancelled:false},prior=null;
+        var log={revision:rules?'names-v3':'paragraph-v3',names:rules,stripHonorifics:options.stripHonorifics===true,allNames:options.allNames===true,pages:[],cancelled:false},prior=null;
         if(logFile.exists)prior=MJSON.parse(MTA.read(logFile));
         if(prior && MJSON.stringify(prior.names||null)!==MJSON.stringify(rules))prior=null;
         if(prior && !!prior.stripHonorifics!==log.stripHonorifics)prior=null;
@@ -207,6 +216,7 @@ var MTARepair=(function(){
                     doc=app.open(file);var result=repairDocument(doc,manifest,tick,{names:rules,stripHonorifics:options.stripHonorifics===true,allNames:options.allNames===true,sizing:options.sizing,allowEmpty:item.page.required===0});
                     row.fixed=result.fixed;row.errors=result.errors;row.replacements=result.replacements;row.counts=result.counts;
                     row.honorifics=result.honorifics;row.trimmed=result.trimmed;
+                    row.layouts=result.layouts;
                     if(!result.fixed && ((!rules && !result.unchanged) || result.errors.length))throw Error('Không sửa được thoại nào; xem lỗi vùng trong log.');
                     if(!result.fixed){
                         doc.close(SaveOptions.DONOTSAVECHANGES);doc=null;
@@ -218,6 +228,14 @@ var MTARepair=(function(){
                         var saved={};MTA.saveCopy(doc,out,decodeURI(file.name),
                             {psd:/\.psd$/i.test(file.name),pdf:/\.pdf$/i.test(file.name),pdfLayers:true},'chapter',saved);
                         row.output=saved.pdf||saved.psd;
+                        var sidecar=new File(file.fsName+'.lettering.json');
+                        if(sidecar.exists){
+                            var metadata=MJSON.parse(MTA.read(sidecar));metadata.regions=metadata.regions||{};metadata.renderer=MTA.uiVersion;
+                            for(var li=0;li<result.layouts.length;li++){var info=result.layouts[li],key='$'+info.id,oldInfo=metadata.regions[key]||{};
+                                metadata.regions[key]={styleId:oldInfo.styleId||null,text:oldInfo.text||info.sourceText,renderedText:info.content,layout:info.selection,
+                                    sizeException:info.sizeException||null,size:info.size,leading:info.leading};}
+                            MTA.writeCheckpoint(new File(row.output+'.lettering.json'),MJSON.stringify(metadata));
+                        }
                     }
                     row.status=result.errors.length?'needs_attention':'complete';
                 }catch(e){row.error=String(e.message||e);if(/Đã hủy/.test(row.error))log.cancelled=true;}

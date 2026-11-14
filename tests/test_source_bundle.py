@@ -20,14 +20,15 @@ class SourceBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name in ('README.md', 'manga_ai/engines/flat_finish.py', 'models/manifest.json',
-                         'scripts/core.jsxinc', 'scripts/lettering_styles.jsxinc', 'scripts/style_manager.jsxinc',
+                         'scripts/core.jsxinc', 'scripts/lettering_styles.jsxinc', 'scripts/style_manager.jsxinc', 'scripts/dialogue_policy.jsxinc',
                          'tests/test_contract.py', 'tests/photoshop_engine_smoke.jsx',
                          'docs/validation/photoshop-smoke.example.json'):
                 self.put(root, name)
             expected = {p.relative_to(root).as_posix() for p in bundle.source_files(root)}
-            self.assertEqual(len(expected), 9)
+            self.assertEqual(len(expected), 10)
             self.assertIn('scripts/lettering_styles.jsxinc', expected)
             self.assertIn('scripts/style_manager.jsxinc', expected)
+            self.assertIn('scripts/dialogue_policy.jsxinc', expected)
             self.assertIn('models/manifest.json', expected)
             self.assertIn('tests/photoshop_engine_smoke.jsx', expected)
 

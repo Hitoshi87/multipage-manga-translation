@@ -9,7 +9,10 @@ def touch(root, names):
     for name in names:
         file = Path(root) / name
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_bytes(b'x')
+        from manga_ai.model_registry import models
+        sizes = {'models/' + item['path']: item['size_bytes'] for item in models('all')}
+        with file.open('wb') as stream:
+            stream.truncate(sizes.get(name, 1))
 
 
 GOOD_DOCTOR = lambda: {'tesseract': '/usr/bin/tesseract', 'languages': ['eng', 'jpn', 'jpn_vert']}
@@ -39,7 +42,7 @@ class EnvironmentCheckTests(unittest.TestCase):
         baberu = next(i for i in result['items'] if i['id'] == 'baberu')
         self.assertFalse(baberu['ok'])
         self.assertEqual(len(baberu['missing']), 4)
-        self.assertEqual(baberu['fix'], 'python manga_typesetter.py download-models --profile assist')
+        self.assertEqual(baberu['fix'], 'python manga_typesetter.py download-models --profile auto')
 
     def test_all_problems_are_listed_together_not_one_at_a_time(self):
         with tempfile.TemporaryDirectory() as root:
@@ -58,7 +61,7 @@ class EnvironmentCheckTests(unittest.TestCase):
         ai = next(i for i in result['items'] if i['id'] == 'ai_clean')
         self.assertFalse(ai['ok'])
         self.assertFalse(ai['required'])
-        self.assertIn('--profile preview', ai['fix'])
+        self.assertIn('--profile auto', ai['fix'])
         self.assertIn('thiếu model AI', ' '.join(result['plan']))
 
     def test_tesseract_without_vertical_japanese_is_reported(self):
@@ -67,6 +70,13 @@ class EnvironmentCheckTests(unittest.TestCase):
             result = self.check(root, doctor_fn=lambda: {'tesseract': '/usr/bin/tesseract', 'languages': ['eng']})
         tess = next(i for i in result['items'] if i['id'] == 'tesseract')
         self.assertEqual(tess['missing'], ['ngôn ngữ jpn_vert'])
+
+    def test_runtime_dll_failure_is_not_reported_ready(self):
+        with tempfile.TemporaryDirectory() as root:
+            touch(root, list(env.DETECTOR) + env.baberu_files() + list(env.AI_CLEAN))
+            result = self.check(root, doctor_fn=lambda: {**GOOD_DOCTOR(), 'hardware': {'error': 'DLL load failed'}})
+        self.assertFalse(result['ready'])
+        self.assertIn('DLL load failed', result['items'][0]['missing'][0])
 
     def test_a_crashing_doctor_does_not_hide_the_other_findings(self):
         def boom():

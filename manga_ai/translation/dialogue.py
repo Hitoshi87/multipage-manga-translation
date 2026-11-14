@@ -43,7 +43,7 @@ def prior_translations(run, group):
             continue
         result.append({'id':context['id'], 'page_id':context.get('page_id'), 'jp':context['jp'],
                        'vi':row['semantic_translation'], 'status':row.get('status', 'needs_review'),
-                       'flags':row.get('flags', []), 'speaker':{'status':'unknown'}, 'addressee':{'status':'unknown'}})
+                       'flags':row.get('flags', []), 'source_revision':row.get('source_revision'), 'segment_version':row.get('segment_version'), 'speaker':{'status':'unknown'}, 'addressee':{'status':'unknown'}})
     return result
 
 

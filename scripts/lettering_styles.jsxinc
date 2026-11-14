@@ -95,6 +95,7 @@ var MTAStyles = (function () {
             out.leading=s.leading;out.autoLeading=false;out.styleStroke=s.stroke||null;out.appliedStyleId=s.id;
             var size=s.size*(s.unit==='pt'?resolution/72:(options.styleScale||1));
             out.targetSize=size;out.max=size;out.min=size*(options.sizePolicy==='fixed'?1:options.sizePolicy==='uniform'?.9:.75);
+            if(options.sizePolicy==='uniform' && options.fitMinScale===.65)out.min=size*.65;
             out.sparseBoost=1;out.maxCap=size;
         }
         return {options:out,text:result.text};

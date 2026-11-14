@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from manga_ai.layout_plan import page_size_cap, plan_layout, rect_shape, wrap_scored
+from manga_ai.layout_plan import layout_candidates, page_size_cap, plan_layout, rect_shape, wrap_scored
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE = shutil.which('node')
@@ -18,7 +18,7 @@ const cases=JSON.parse(fs.readFileSync(0,'utf8'));
 const out=cases.map(c=>{
   const u=s=>s.length*.5;
   const p=ctx.MTA.planLayout(c.shape,c.paragraphs,u,c.ref,c.options);
-  return p?{size:p.size,lines:Array.from(p.lines),axis:p.axis,baseline:p.baseline,fill:p.fill}:null;
+  return p?{size:p.size,lines:Array.from(p.lines),axis:p.axis,baseline:p.baseline,fill:p.fill,score:p.selectionScore}:null;
 });
 console.log(JSON.stringify(out));
 """
@@ -54,6 +54,34 @@ CASES = [
 
 @unittest.skipUnless(NODE, 'node is required for the parity check')
 class ParityTests(unittest.TestCase):
+    def test_auto_ranking_matches_photoshop_and_respects_size_and_authored_breaks(self):
+        cases = [dict(case, options=dict(case['options'], autoLayout=True)) for case in CASES]
+        cases.append({'shape': rect_shape([0, 0, 200, 180]),
+                      'paragraphs': ['Cậu đang nói cái gì vậy hả', 'tớ chẳng hiểu gì cả'], 'ref': 1.15,
+                      'options': {'min': 18, 'max': 18, 'leading': 1.3, 'autoLayout': True}})
+        result = subprocess.run([NODE, '-e', RUNNER], input=json.dumps(cases), capture_output=True,
+                                text=True, cwd=ROOT, check=True)
+        for case, js in zip(cases, json.loads(result.stdout)):
+            py = plan_layout(case['shape'], case['paragraphs'], lambda s: len(s) * .5, case['ref'], case['options'])
+            self.assertIsNotNone(py)
+            self.assertEqual(py['lines'], js['lines'])
+            self.assertAlmostEqual(py['size'], js['size'], places=6)
+            if not case['options'].get('lineCount'):
+                self.assertAlmostEqual(py['selectionScore'], js['score'], places=6)
+            ranked = layout_candidates(case['shape'], case['paragraphs'], lambda s: len(s) * .5,
+                                       case['ref'], case['options'])
+            self.assertEqual(py['lines'], ranked[0]['lines'])
+            self.assertEqual([p['selectionScore'] for p in ranked], sorted(p['selectionScore'] for p in ranked))
+        self.assertEqual(py['size'], 18)
+        self.assertIn('Cậu đang nói cái gì vậy hả', '\n'.join(py['lines']).replace('\n', ' '))
+        first_paragraph_words = len(cases[-1]['paragraphs'][0].split())
+        count = 0
+        boundaries = []
+        for line in py['lines']:
+            count += len(line.split())
+            boundaries.append(count)
+        self.assertIn(first_paragraph_words, boundaries, 'Automatic ranking must preserve authored paragraph boundaries')
+
     def test_python_planner_matches_the_photoshop_planner(self):
         result = subprocess.run([NODE, '-e', RUNNER], input=json.dumps(CASES), capture_output=True, text=True, cwd=ROOT, check=True)
         js = json.loads(result.stdout)

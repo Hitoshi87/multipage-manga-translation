@@ -5,6 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# JSON diagnostics redirected by Windows Photoshop must remain UTF-8,
+# including Vietnamese paths on machines using a legacy ANSI code page.
+if sys.platform == 'win32':
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
+
 from manga_ai.cli import main
 from manga_ai.io import write_json
 

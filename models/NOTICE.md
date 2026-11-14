@@ -27,3 +27,7 @@ The setup script downloads individually pinned weights, verifies SHA-256 and doe
 # AOT Koharu alternative (2026-11-06)
 
 [mayocream/aot-inpainting](https://huggingface.co/mayocream/aot-inpainting), revision `cffe2346ac2b5ebe1f2d61335d602d12cc144c6f`, declares MIT. SafeTensors file `models/aot_manga.safetensors`: 22,732,864 bytes, SHA-256 `1b4fea17a84a228c2097a42ab2f403357f07bb56ae022dc243b40817b7aa87d1`, 5,679,244 parameters. Architecture compatible with [zyddnys/manga-image-translator AOTGenerator](https://github.com/zyddnys/manga-image-translator/blob/main/manga_translator/inpainting/inpainting_aot.py); see upstream licensing before redistribution. Local implementation reads only verified SafeTensors, never executes downloaded model code. LaMa/AOT inference is crop-local; neither repairs an incorrect detection mask automatically.
+
+## Tesseract language data
+
+Profile `auto` / `tessdata` tải 7 file `tessdata_fast` từ kho chính thức tesseract-ocr, ghim revision `87416418657359cb625c412a48b6e1d6d41c29bd` và SHA-256 trong manifest. Giấy phép Apache-2.0: https://github.com/tesseract-ocr/tessdata_fast/blob/87416418657359cb625c412a48b6e1d6d41c29bd/LICENSE . Không phân phối weights trong Git.

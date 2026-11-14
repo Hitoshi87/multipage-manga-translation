@@ -1,5 +1,13 @@
 # Changelog
 
+## 1107-ui.6 — 2026-11-14
+
+- Thêm style theo bộ truyện, nhập JSON TypeR và lựa chọn xuống dòng trong Rà soát nhanh; tự xếp hạng phương án khi typeset.
+- Lưu văn phong/quy tắc xưng hô theo bộ truyện, bộ nhớ thoại trước có giới hạn và lượt kiểm tra ngữ cảnh tùy chọn sau mỗi nhóm (thêm lượt API). Giữ cấu hình lượt cũ khi tiếp tục.
+- Auto leading đo chiều cao chữ trong câu thực tế. Chế độ Đồng đều được thu nhỏ có kiểm soát đến 65% cỡ chuẩn cho bóng hẹp; Cố định tuyệt đối vẫn từ chối câu không vừa.
+- Chữ vẫn không vừa được giữ ẩn thay vì kéo rộng đè tranh. Sửa hàng loạt dùng cùng bộ dàn chữ, giữ trạng thái ẩn của vùng chưa clean và cập nhật metadata bên cạnh PDF/PSD.
+- Báo cáo ghi nhận các vùng phải dùng cỡ nhỏ. Đã kiểm tra dàn lại 12 vùng của ba trang thử bằng Photoshop 2025 trên macOS, xuất lại PDF giữ layer và kiểm tra hình render. Chưa xác thực native Windows hoặc toàn bộ font.
+
 ## 1107-ui.5 — 2026-11-14
 
 - Chạy dài tiếp tục đúng checkpoint, thử kết nối lại Photoshop an toàn, chờ cập nhật API key hoặc phục hồi upstream thay vì bỏ nhóm dịch.
@@ -31,3 +39,10 @@
 - Đóng gói source không weights/dữ liệu truyện, downloader pin revision/checksum, CI và smoke test cấu hình local. Loại runner benchmark lịch sử khỏi bản phát hành.
 
 Bản 0.4 được người dùng duyệt trên mẫu Chef047 sau kiểm chứng composite CMYK. Điều này không chứng minh toàn volume hoặc mọi artwork khó đã clean an toàn. Chi tiết: [báo cáo kiểm chứng](docs/validation/1107_flat_field.md).
+
+## Cài đặt đa nền tảng và model auto
+
+- Bộ cài chung Python 3.12, wrapper Windows/macOS/Linux, profile auto đủ Baberu, CTD/LaMa, head và Tesseract languages (~653 MB).
+- Manifest dùng chung cho downloader/preflight; tải có retry, kiểm tra size/SHA-256, không ghi đè file bằng download lỗi.
+- Doctor theo profile kiểm tra import thư viện thực tế và model; phát hiện Tesseract trên Windows, hỗ trợ đường dẫn Unicode.
+- Thêm CI kiểm tra bộ cài trên ba OS; bổ sung hướng dẫn cài từ GitHub và phân biệt model tùy chọn/Magi.

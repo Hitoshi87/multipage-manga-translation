@@ -1,12 +1,15 @@
 # Weights ngoài Git
 
-Git chỉ lưu manifest/checksum và notices. Weights được tải từ upstream về thư mục local `models/`, không có trong clone GitHub.
+Git chỉ lưu manifest/checksum và notices. ZIP/clone từ GitHub không có weights. Chạy bộ cài hệ điều hành với `--install` để cài thư viện **và** đủ model profile `auto`.
 
 ```sh
-python scripts/download_models.py --profile 1107          # kiểm tra offline
-python scripts/download_models.py --profile 1107 --download
+# Chạy bằng Python trong .venv của máy hiện tại
+python scripts/download_models.py --profile auto
+python scripts/download_models.py --profile auto --download
 ```
 
-Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và Magi (7 file, ~2 GB, dùng cho thứ tự panel). Lệnh downloader không cài thư viện, không thực thi code từ model và không đổi weights đúng checksum. Phiên bản upstream được pin trong URL; file tải tạm chỉ thay thế sau khi đúng kích thước và SHA-256. Không tự tải khi đang inference.
+Downloader là công cụ chỉ dùng thư viện chuẩn, không cài dependency. Mặc định kiểm tra offline; `--download` cho phép tải. URL được pin revision; xác minh cả kích thước và SHA-256 trước khi thay file. Tải thất bại có thể chạy lại, file hợp lệ được giữ nguyên. Không tải trong lúc inference.
 
-Các profile `preview`, `assist`, `aot` là tùy chọn; Magi/Qwen và weights nghiên cứu không nằm trong profile 1107. Xem NOTICE.md và điều khoản upstream trước khi sử dụng/phân phối. Không coi source code license là license của weights. `--model-dir` chỉ đổi nơi downloader ghi file; runtime hiện vẫn đọc project/models, chưa hỗ trợ model directory tùy ý.
+`auto` gồm balloon, text detector, CTD, head, LaMa, 4 file Baberu và 7 ngôn ngữ Tesseract. Các profile cũ `1107`, `assist`, `preview`, `aot` giữ nguyên nội dung; **1107 và assist có Magi (~2 GB)**. `all` bao gồm mọi file manifest; Qwen/MLX vẫn cài riêng. Magi có điều khoản phi thương mại; xem NOTICE.md trước khi sử dụng/phân phối.
+
+`--model-dir` chỉ đổi đích của downloader; worker vẫn đọc `project/models`. Xem [hướng dẫn cài đặt](../docs/runtime/installation.md) để biết lệnh cụ thể từng OS và cách kiểm tra thư viện/DLL thực tế.

@@ -4,29 +4,22 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export HOMEBREW_NO_AUTO_UPDATE=1
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo "Bộ cài này dành cho macOS."; exit 1
+  echo 'Use setup_windows.cmd or setup_linux.sh for this OS.'; exit 1
 fi
-if [[ "${1:-}" != --install ]]; then
-  if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
-    "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/manga_typesetter.py" doctor || true
+if [[ " $* " == *" --install "* ]]; then
+  if ! command -v brew >/dev/null; then
+    echo 'Install Homebrew from https://brew.sh then rerun.'; exit 1
   fi
-  echo "Chỉ kiểm tra. Để cho phép cài dependency: bash \"$PROJECT_DIR/setup_macos.command\" --install"
-  exit 0
+  for package in python@3.12 tesseract; do
+    if ! brew list --versions "$package" >/dev/null 2>&1; then brew install "$package"; fi
+  done
 fi
-if ! command -v brew >/dev/null; then
-  echo "Chưa có Homebrew. Cài từ https://brew.sh rồi chạy lại."; exit 1
+PYTHON_BIN="$(command -v python3.12 || true)"
+if command -v brew >/dev/null; then
+  BREW_PYTHON="$(brew --prefix)/opt/python@3.12/bin/python3.12"
+  if [[ -x "$BREW_PYTHON" ]]; then PYTHON_BIN="$BREW_PYTHON"; fi
 fi
-BREW_PREFIX="$(brew --prefix)"
-for package in python@3.12 tesseract tesseract-lang; do
-  if ! brew list --versions "$package" >/dev/null 2>&1; then brew install "$package"; fi
-done
-PYTHON_BIN="$BREW_PREFIX/opt/python@3.12/bin/python3.12"
-if [[ -e "$PROJECT_DIR/.venv" ]]; then
-  if ! "$PROJECT_DIR/.venv/bin/python" -c 'import sys; assert sys.version_info[:2] == (3, 12)' 2>/dev/null; then
-    echo "Giữ lại .venv cũ; hãy đổi tên thư mục đó rồi chạy lại bằng Python 3.12."; exit 1
-  fi
-else
-  "$PYTHON_BIN" -m venv "$PROJECT_DIR/.venv"
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo 'Missing Python 3.12. Run bash setup_macos.command --install'; exit 1
 fi
-"$PROJECT_DIR/.venv/bin/python" -m pip install --only-binary=:all: -r "$PROJECT_DIR/requirements.txt"
-"$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/manga_typesetter.py" doctor
+exec "$PYTHON_BIN" "$PROJECT_DIR/setup.py" "$@"

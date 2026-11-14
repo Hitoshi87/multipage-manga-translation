@@ -46,6 +46,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(severity(['speaker_unclear', 'clean_skipped']), 'fix')
         self.assertEqual(severity([]), 'ok')
 
+    def test_small_uniform_exceptions_are_visible_in_review_report(self):
+        page = dict(self.log['pages'][1], layout_review=[{'id': 'B001', 'flags': ['at_min_size'], 'size': 41}])
+        items, pages = collect_items({'pages': [page]}, {})
+        self.assertEqual(pages[0]['status'], 'look')
+        self.assertEqual(items[0]['codes'], ['at_min_size'])
+        self.assertIn('Bóng hẹp', reason_text('at_min_size'))
+
     def test_a_page_that_fell_back_to_one_clean_layer_is_reported(self):
         from manga_ai.report import collect_items
         page = dict(self.log['pages'][1], page='05.jpg', clean_applied=3, clean_layers=0)

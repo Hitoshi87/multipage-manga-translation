@@ -17,20 +17,19 @@ from .io import import_text, parse_translations, read_json, write_json, import_t
 
 
 def doctor():
-    local_tessdata = Path(__file__).resolve().parent.parent / "models" / "tessdata"
-    if local_tessdata.is_dir() and "TESSDATA_PREFIX" not in os.environ:
-        os.environ["TESSDATA_PREFIX"] = str(local_tessdata)
-
+    from .ocr_runtime import find_tesseract
     packages = {name: importlib.util.find_spec(module) is not None for name, module in
                 (("numpy", "numpy"), ("opencv-python-headless", "cv2"),
                  ("Pillow", "PIL"), ("pytesseract", "pytesseract"))}
-    executable = next((p for p in [shutil.which("tesseract"), "/opt/homebrew/bin/tesseract",
-                                   "/usr/local/bin/tesseract"] if p and Path(p).is_file()), None)
+    executable = find_tesseract()
     languages = []
     if executable:
-        result = subprocess.run([executable, "--list-langs"], capture_output=True, text=True, timeout=15)
-        if result.returncode == 0:
-            languages = result.stdout.splitlines()[1:]
+        try:
+            result = subprocess.run([executable, "--list-langs"], capture_output=True, text=True, timeout=15)
+            if result.returncode == 0:
+                languages = [line.strip() for line in result.stdout.splitlines()[1:]]
+        except (OSError, subprocess.TimeoutExpired):
+            executable = None
     missing_langs = [v for v in ("eng", "jpn", "jpn_vert", "chi_sim", "chi_tra", "kor", "vie") if v not in languages]
     try:
         from .hardware import runtime_info
@@ -250,15 +249,18 @@ def natural_key(path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Manga Typesetter AI — macOS local worker")
+    parser = argparse.ArgumentParser(description="Manga Typesetter AI — Windows / macOS / Linux local worker")
     parser.add_argument("--request", type=Path)
     parser.add_argument("--response", type=Path)
     parser.add_argument("--accel", choices=("auto", "cpu", "coreml", "cuda"), default=None,
                         help="Chế độ tăng tốc phần cứng: auto, cpu, coreml hoặc cuda")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("doctor")
+    from .model_registry import PROFILES
+    health = sub.add_parser("doctor")
+    health.add_argument('--profile', choices=PROFILES)
+    health.add_argument('--verify-models', action='store_true')
     dl = sub.add_parser("download-models", help="Tải hoặc kiểm tra weights model theo profile")
-    dl.add_argument("--profile", choices=["1107", "preview", "assist", "aot"], default="1107")
+    dl.add_argument("--profile", choices=PROFILES, default="auto")
     dl.add_argument("--check-only", action="store_true", help="Chỉ kiểm tra offline mà không tải")
     clean = sub.add_parser("clean", help="Tạo overlay từ mapping đã duyệt trong manifest")
     clean.add_argument("manifest", type=Path)
@@ -337,6 +339,28 @@ def main(argv=None):
     if args.command == "doctor":
         import json
         report = doctor()
+        if args.profile:
+            from .model_registry import models, status
+            rows = models(args.profile)
+            report['models'] = {item['path']: status(item, verify=args.verify_models) for item in rows}
+            modules = ['numpy', 'cv2', 'PIL', 'pytesseract', 'onnxruntime']
+            if args.profile in ('1107', 'assist', 'all'):
+                modules += ['torch', 'torchvision', 'transformers', 'safetensors', 'timm', 'einops', 'scipy', 'shapely', 'matplotlib', 'accelerate']
+            if args.profile in ('preview', 'aot', 'all'):
+                modules += ['torch', 'safetensors']
+            if args.profile in ('assist', 'all'):
+                modules += ['tokenizers']
+            imports = {}
+            for module in dict.fromkeys(modules):
+                try:
+                    probe = subprocess.run([sys.executable, '-c', 'import '+module], capture_output=True, text=True, timeout=90)
+                    imports[module] = 'ok' if probe.returncode == 0 else probe.stderr.strip()[-1500:]
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    imports[module] = str(exc)
+            report['imports'] = imports
+            report['ready'] = (report['ready'] and sys.version_info[:2] == (3, 12)
+                               and all(value == 'ok' for value in report['models'].values())
+                               and all(value == 'ok' for value in imports.values()))
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["ready"] else 2
     if args.command == "download-models":

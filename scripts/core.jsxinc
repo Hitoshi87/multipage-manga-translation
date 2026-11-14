@@ -1,7 +1,7 @@
 /* Photoshop-only operations; shared by the UI and real Photoshop smoke tests. */
 var MTA = (function () {
     var serial = 0;
-    var uiVersion = '1107-ui.5';
+    var uiVersion = '1107-ui.6';
     function inputPolicy(engineId, mode) {
         var legacy = engineId === 'baseline', clean = !mode.alreadyClean;
         return {legacyTools:legacy && clean, fullPage:legacy && clean,
@@ -277,6 +277,7 @@ var MTA = (function () {
     // string at size 1, refRatio the line ink height per size. It finds the
     // largest size at which some line count and block shift fit the shape.
     function planLayout(shape, paragraphs, unitWidth, refRatio, o) {
+        if(o.autoLayout && !o.lineCount){var ranked=layoutCandidates(shape,paragraphs,unitWidth,refRatio,o);return ranked.length?ranked[0]:null;}
         var rows={}, area=0, i, cx0=shape.center[0], cy0=shape.center[1], maxWidth=0;
         for(i=0;i<shape.rows.length;i++){rows[shape.rows[i][0]]=shape.rows[i];area+=shape.rows[i][2]-shape.rows[i][1];maxWidth=Math.max(maxWidth,shape.rows[i][2]-shape.rows[i][1]);}
         // Vertical centre of the balloon body: rows at least half as wide as the
@@ -370,6 +371,24 @@ var MTA = (function () {
         }
         return best;
     }
+    // Shared ranking for automatic placement and the review proposal list.
+    // Lower is better: readable breaks, ink fill and optical centring from the
+    // planner, plus a size-loss penalty so shrinking is not a free improvement.
+    function layoutCandidates(shape,paragraphs,unitWidth,refRatio,o){
+        var cfg={},k,i;for(k in o)cfg[k]=o[k];cfg.autoLayout=false;
+        var base=planLayout(shape,paragraphs,unitWidth,refRatio,cfg);
+        if(!base)return [];
+        var result=[base],seen={},offsets=[1,-1,2,-2,3,-3],largest=base.size;
+        seen['$'+base.lines.join('\n')]=true;
+        if(!o.lineCount)for(i=0;i<offsets.length;i++){
+            cfg.lineCount=base.lines.length+offsets[i];if(cfg.lineCount<1||cfg.lineCount>24)continue;
+            var plan=planLayout(shape,paragraphs,unitWidth,refRatio,cfg);
+            if(plan&&!seen['$'+plan.lines.join('\n')]){seen['$'+plan.lines.join('\n')]=true;result.push(plan);largest=Math.max(largest,plan.size);}
+        }
+        for(i=0;i<result.length;i++){result[i].selectionScore=result[i].quality+1.2*Math.max(0,1-result[i].size/largest);result[i].candidateOrder=i;}
+        result.sort(function(a,b){return a.selectionScore-b.selectionScore||a.candidateOrder-b.candidateOrder;});
+        return result;
+    }
     // Page-level size cap: bubbles fit to their own shape first, then no bubble
     // may exceed factor x the page median, so short lines do not become huge.
     function pageSizeCap(sizes, factor, minSize) {
@@ -393,8 +412,8 @@ var MTA = (function () {
         return out;
     }
     function readableLeading(options, inkRatio) {
-        return Math.max(Number(options.leading)||1.3, (Number(inkRatio)||1.15)+.10,
-                        options.autoLeading===true?1.3:1);
+        if(options.autoLeading===true)return Math.max(1.05,(Number(inkRatio)||1.15)+.08);
+        return Math.max(Number(options.leading)||1.3, (Number(inkRatio)||1.15)+.10,1);
     }
     function normalHorizontalText(t) {
         // Do not inherit a previously selected vertical or transformed Type style.
@@ -500,7 +519,10 @@ var MTA = (function () {
                 if(fontMetricKeys.length>=8)delete fontMetricCache[fontMetricKeys.shift()];
                 fontMetricKeys.push(metricKey);fontMetricCache[metricKey]=metrics;
             }
-            var spaceW=metrics.space,refRatio=metrics.ink,accRatio=metrics.acc,capRatio=metrics.cap;
+            // Use this utterance's real ink, not a synthetic sample containing
+            // every tall accent and descender on every line of every bubble.
+            var actualInk=measure(translation.replace(/[\r\n]+/g,' '))[1]/refSize;
+            var spaceW=metrics.space,refRatio=actualInk>0?actualInk:metrics.ink,accRatio=metrics.acc,capRatio=metrics.cap;
             var spacing={autoLeading:options.autoLeading,leading:readableLeading(options,refRatio)},lead=configureLeading(t,spacing);
             if(!(accRatio>0&&accRatio<2))accRatio=undefined;
             if(!(capRatio>0&&capRatio<2))capRatio=undefined;
@@ -512,14 +534,21 @@ var MTA = (function () {
             function unitWidth(str){var ws=str.split(' '),sum=0;for(var k=0;k<ws.length;k++)sum+=wordW(ws[k]);return sum+spaceW*(ws.length-1);}
             var layoutShape=shape||rectShape(box), paragraphs=translation.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
             var cap=options.maxCap!==undefined?options.maxCap:options.max, best=null;
+            var candidates=null,candidateIndex=0,rounds=0,nativeAttempts=0,autoLayout=options.autoLayout===true&&!options.lineCount;
             // Planning is pure arithmetic on cached widths; Photoshop only
             // verifies the result, and the size shrinks if real metrics disagree.
-            for(var tries=0;tries<14;tries++){
-                var plan=planLayout(layoutShape,paragraphs,unitWidth,refRatio,{min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12,lineCount:options.lineCount});
-                if(!plan)break;
+            for(var tries=0;tries<(autoLayout?98:14);tries++){
+                if(!candidates){
+                    var planOptions={min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12,lineCount:options.lineCount};
+                    var single=autoLayout?null:planLayout(layoutShape,paragraphs,unitWidth,refRatio,planOptions);
+                    candidates=autoLayout?layoutCandidates(layoutShape,paragraphs,unitWidth,refRatio,planOptions):(single?[single]:[]);candidateIndex=0;
+                }
+                if(!candidates.length)break;
+                var plan=candidates[candidateIndex++];
                 // The sizing pass only chooses a page cap; the final pass
                 // verifies actual Photoshop bounds once for every kept layer.
                 if(options.dryRun){best=plan;break;}
+                nativeAttempts++;
                 var ok=true,axis=plan.axis;
                 t.size=UnitValue(plan.size*72/doc.resolution,'pt');
                 applyLeading(t, lead, plan.lead, doc.resolution);
@@ -541,12 +570,23 @@ var MTA = (function () {
                     });
                     t.contents=plan.lines.join('\r');
                 }
+                if(ok && options.styleStroke){
+                    var margin=options.styleStroke.size*(options.styleScale||1);
+                    ok=placedLinesFit(layoutShape,plan.lines,plan.lead,function(line){
+                        t.contents=line;var b=bounds(layer);return [b[0]-margin,b[1]-margin,b[2]+margin,b[3]+margin];
+                    });t.contents=plan.lines.join('\r');
+                }
                 if(ok){best=plan;break;}
-                cap=plan.size*.97;if(cap<options.min)break;
+                // Test the next ranked proposal before reducing the size ceiling.
+                if(candidateIndex<candidates.length)continue;
+                cap=Math.min(cap,candidates[0].size)*.97;candidates=null;rounds++;
+                if(cap<options.min||rounds>=14)break;
             }
-            if (!best) throw Error(region.id + (options.sizePolicy==='fixed'?': không vừa cỡ cố định; cần rút gọn hoặc chỉnh khung.':': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.'));
+            if (!best){var noFit=Error(region.id + (options.sizePolicy==='fixed'?': không vừa cỡ cố định; cần rút gọn hoặc chỉnh khung.':': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.'));noFit.layoutFailure=true;throw noFit;}
             best.content=best.lines.join('\r');
-            lastLayoutInfo={id:region.id,size:best.size,fill:best.fill,lines:best.lines.length,content:best.lines.join('\n'),sourceText:sourceText,styleId:options.appliedStyleId||null,sizePolicy:options.sizePolicy||'adaptive',targetSize:options.targetSize||null};
+            lastLayoutInfo={id:region.id,font:options.font,size:best.size,leading:lead.ratio,autoLeading:lead.auto,fill:best.fill,lines:best.lines.length,content:best.lines.join('\n'),sourceText:sourceText,styleId:options.appliedStyleId||null,sizePolicy:options.sizePolicy||'adaptive',targetSize:options.targetSize||null};
+            lastLayoutInfo.selection={method:autoLayout?'ranked-v1':'planner',score:best.selectionScore===undefined?best.quality:best.selectionScore,candidates:candidates?candidates.length:1,attempts:nativeAttempts};
+            if(options.collectLayouts)lastLayoutInfo.proposals=candidates;
             if(options.dryRun){layer.remove();return null;}
             var actual = bounds(layer);
             if (actual[0] < box[0] - .5 || actual[1] < box[1] - .5 ||
@@ -571,34 +611,44 @@ var MTA = (function () {
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=previousQuotes; }
     }
+    // Keep the normal uniform range whenever possible. A narrow balloon may
+    // need a smaller size; never solve this by extending text over the artwork.
+    function addBubbleText(doc,group,region,text,options){
+        try{return addText(doc,group,region,text,options);}
+        catch(error){
+            if(!error.layoutFailure||options.sizePolicy!=='uniform'||options.allowSizeException===false)throw error;
+            var cfg={},k;for(k in options)cfg[k]=options[k];
+            var prepared=typeof MTAStyles!=='undefined'?MTAStyles.prepare(options,region,text,doc.resolution).options:options;
+            var target=prepared.targetSize||prepared.max,normalMin=prepared.min;
+            cfg.min=Math.min(normalMin,target*.65);cfg.fitMinScale=.65;
+            var layer=addText(doc,group,region,text,cfg);
+            if(lastLayoutInfo)lastLayoutInfo.sizeException={normalMin:normalMin,allowedMin:cfg.min,size:lastLayoutInfo.size};
+            return layer;
+        }
+    }
     // Proposals use native font probes and the same shape planner as placement.
     // The final application verifies actual Photoshop ink bounds.
     function suggestLayouts(doc,region,text,options){
-        var saved=doc.activeLayer,results=[],seen={},cfg={},k,i,base=0;
-        for(k in options)cfg[k]=options[k];cfg.dryRun=true;
+        var saved=doc.activeLayer,results=[],cfg={},k;
+        for(k in options)cfg[k]=options[k];cfg.dryRun=true;cfg.autoLayout=true;cfg.collectLayouts=true;cfg.lineCount=0;
         text=String(text).replace(/\s+/g,' ').replace(/^\s+|\s+$/g,'');
         var authored=typeof MTAStyles!=='undefined'?MTAStyles.prepare(options,region,text,doc.resolution).text:text;
         authored=normalizeText(authored,'keep');
         try{
-            for(i=0;i<7;i++){
-                cfg.lineCount=i===0?0:base+[1,-1,2,-2,3,-3][i-1];
-                if(i && (cfg.lineCount<1||cfg.lineCount>24))continue;
-                try{
-                    addText(doc,doc,region,text,cfg);
-                    var info=lastLayoutInfo;
-                    if(!info)continue;if(!i)base=info.lines;
-                    // Measure rendered capitals but keep the translator's casing in
-                    // the edit box and project. Only whitespace gains line breaks.
-                    if(authored.replace(/\s/g,'').toLowerCase()!==info.content.replace(/\s/g,'').toLowerCase())continue;
-                    var content='',at=0;
-                    for(var c=0;c<info.content.length;c++){
-                        var ch=info.content.charAt(c);
-                        if(/\s/.test(ch))content+=ch;
-                        else{while(at<authored.length&&/\s/.test(authored.charAt(at)))at++;content+=authored.charAt(at++);}
-                    }
-                    if(!seen['$'+content]){seen['$'+content]=true;results.push({text:content,size:info.size,lines:info.lines});}
-                    if(results.length===5)break;
-                }catch(e){if(!i)throw e;}
+            // One native probe layer, shared cached metrics, all ranking in arithmetic.
+            addBubbleText(doc,doc,region,text,cfg);
+            var plans=lastLayoutInfo&&lastLayoutInfo.proposals||[];
+            for(var i=0;i<plans.length&&results.length<5;i++){
+                var plan=plans[i],rendered=plan.lines.join('\n');
+                // Measure rendered capitals without rewriting the saved translation.
+                if(authored.replace(/\s/g,'').toLowerCase()!==rendered.replace(/\s/g,'').toLowerCase())continue;
+                var content='',at=0;
+                for(var c=0;c<rendered.length;c++){
+                    var ch=rendered.charAt(c);
+                    if(/\s/.test(ch))content+=ch;
+                    else{while(at<authored.length&&/\s/.test(authored.charAt(at)))at++;content+=authored.charAt(at++);}
+                }
+                results.push({text:content,size:plan.size,lines:plan.lines.length,score:plan.selectionScore});
             }
         }finally{try{doc.activeLayer=saved;}catch(_){}}
         return results;
@@ -1048,5 +1098,5 @@ var MTA = (function () {
         return savePsd ? psd : pdf;
     }
     return {letteringSizeOptions:letteringSizeOptions, uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, sourceRenameCandidate:sourceRenameCandidate, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
-            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, suggestLayouts:suggestLayouts, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
+            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, suggestLayouts:suggestLayouts, layoutCandidates:layoutCandidates, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addBubbleText:addBubbleText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

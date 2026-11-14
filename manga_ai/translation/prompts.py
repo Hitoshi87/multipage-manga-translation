@@ -38,7 +38,7 @@ MANGA_CONVENTIONS = '''MANGA CONVENTIONS:
 - Output plain lettering text only. No markdown (**, *, _, #, backticks), HTML, emoji, arrows, bullets, numbering, labels such as “Note:”, translator notes, stage directions in parentheses such as (cười), square-bracket placeholders, or alternatives joined with / or |. Parentheses only where the source has them.
 - Preserve meaningful decorative symbols such as ♡, ♪ and ★. Quote with “ ” (nested ‘ ’). Do not write in capital letters for emphasis; lettering handles case.'''
 DIALOGUE_CONTINUITY = '''DIALOGUE CONTINUITY AND FINAL SELF-CHECK:
-- prior_translations contains ONLY earlier dialogue, aligned Japanese/Vietnamese, with review status. Use it to maintain wording, turn-taking and address conventions across batches, not as verified speaker identification or proof that a draft translation is correct. Never translate or output these context IDs.
+- prior_translations and dialogue_memory contain ONLY earlier dialogue, aligned Japanese/Vietnamese, with review status. Use them to maintain wording, turn-taking and address conventions across batches, not as verified speaker identification or proof that a draft translation is correct. Human-approved corrections take precedence over unapproved drafts. A row flagged speaker_unclear, ambiguous_reference or ocr_suspect cannot establish pronouns unless human_approved. Never translate or output these context IDs.
 - For the SAME evidenced speaker speaking to the SAME addressee in the SAME scene, keep self-reference and address terms stable. Do not switch tôi to em/anh or the reverse just for variety. Different speakers may legitimately use different pronouns. Change address only when the source or a verified series policy establishes a relationship, role, tone or scene change.
 - Infer neither age nor intimacy from Japanese politeness alone. If a speaker/addressee is uncertain, use a natural neutral construction without inventing a pronoun and flag speaker_unclear or ambiguous_reference. Never force the previous speaker's pronouns onto the next speaker.
 - Before returning JSON, reread adjacent bubbles as an exchange: remove unnecessary repeated subjects and literal word order, preserve register and all meaning, and check person, agent, address and continuity against Japanese and supported context. Do this within this response, without extra output or invented scene details.'''
@@ -63,12 +63,14 @@ def compose(profile):
     sections = [CORE, VIETNAMESE_DIALOGUE, DIALOGUE_CONTINUITY, NATURAL_VIETNAMESE, LETTERING_FIT, MANGA_CONVENTIONS, 'When an inferred quote_links entry identifies a phrase repeated in another target, translate both directly from Japanese but preserve the connection consistently in Vietnamese. It is a suggestion, not a fact; flag uncertainty if the link or wording is unclear.']
     if profile.get('strip_honorifics', True):
         sections.append(HONORIFIC_POLICY)
-    for key in FIELDS:
+    for key in FIELDS + ('address_policy',):
         value = profile.get(key, '')
         if not isinstance(value, str):
             raise ValueError('Profile field must be text: ' + key)
         if value.strip():
             sections.append(key.upper() + ':\n' + value.strip())
+    if profile.get('address_policy', '').strip():
+        sections.append('ADDRESS POLICY APPLICATION: Apply each directional self-reference/address rule only when the speaking character and addressee are supported by this scene. Name mentions do not identify the speaker. Do not apply one pair to the whole cast. Source-supported quotations, role or scene changes may require another voice; flag conflicts rather than silently inventing a relationship.')
     # Auto-generated cast may include information from future pages. It must
     # not enter a global prompt until retrieval has a verifiable time boundary.
     if profile.get('vision_mode','off') != 'off':

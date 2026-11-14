@@ -10,7 +10,7 @@ Bạn có thể cung cấp bản dịch hoặc thử tính năng dịch AI tùy 
 
 | Thành phần | Bản hiện tại |
 | --- | --- |
-| Giao diện Photoshop | `1107-ui.5` |
+| Giao diện Photoshop | `1107-ui.6` |
 | Engine tùy chọn | `1107-shadow-0.5` — output cần duyệt |
 | Engine mặc định | `baseline-1` |
 | Đã kiểm thử thực tế | Apple M4 (macOS ARM64, CoreML), NVIDIA RTX 3050 (Linux, CUDA). Windows/NVIDIA chưa xác thực native |
@@ -19,7 +19,7 @@ Bạn có thể cung cấp bản dịch hoặc thử tính năng dịch AI tùy 
 
 1. [Yêu cầu chung](#1-yêu-cầu-chung)
 2. [Cài đặt lần đầu — macOS (Apple Silicon / Intel)](#2-cài-đặt-lần-đầu--macos-apple-silicon--intel)
-3. [Cài đặt lần đầu — NVIDIA CUDA (Windows / Linux)](#3-cài-đặt-lần-đầu--nvidia-cuda-windows--linux)
+3. [Cài đặt lần đầu — Windows / Linux](#3-cài-đặt-lần-đầu--windows--linux)
 4. [Tải model weights](#4-tải-model-weights)
 5. [Kiểm tra môi trường](#5-kiểm-tra-môi-trường)
 6. [Luồng sử dụng trong Photoshop](#6-luồng-sử-dụng-trong-photoshop)
@@ -45,100 +45,49 @@ cd multipage-manga-translation
 
 ## 2. Cài đặt lần đầu — macOS (Apple Silicon / Intel)
 
-Cần [Homebrew](https://brew.sh). Script cài `python@3.12`, `tesseract`, `tesseract-lang`, tạo `.venv` và cài dependency cơ bản.
-
 ```sh
-# 1. Môi trường, Tesseract và dependency cơ bản
 bash setup_macos.command --install
-
-# 2. ONNX Runtime (có CoreML provider trên macOS ARM64)
-.venv/bin/python -m pip install -r requirements-ai.txt
-
-# 3. Weights profile 1107
-.venv/bin/python manga_typesetter.py download-models --profile 1107
-
-# 4. Kiểm tra
-.venv/bin/python manga_typesetter.py doctor
 ```
 
-Ghi chú Apple Silicon:
+Bộ cài tạo `.venv` Python 3.12, cài thư viện, tải và xác minh toàn bộ model cho chế độ **Tự động**, gồm Baberu OCR, CTD + LaMa và bộ ngôn ngữ Tesseract. Cần Homebrew trên macOS.
 
-- CoreML được dùng cho `balloon`, `ctd`, `head`; các model còn lại chạy CPU. Không cần cấu hình thêm.
-- **Lần chạy đầu chậm hơn**: CoreML biên dịch model và lưu cache tại `~/Library/Caches/MangaTypesetterLite/CoreML`. Các lần sau dùng lại cache.
-- Dùng **Tăng tốc → Tự động** (mặc định). `CPU` chỉ là phương án dự phòng nếu CoreML lỗi hoặc máy nóng/chậm dần khi chạy chương dài; đây là giả thuyết chưa được đo.
-- Muốn dùng công cụ preview thử nghiệm (Comic Text Mask, AOT): `.venv/bin/python scripts/setup_preview_models.py`.
-- Lần đầu Photoshop có thể hỏi quyền cho script chạy Python; hãy cho phép.
+## 3. Cài đặt lần đầu — Windows / Linux
 
-## 3. Cài đặt lần đầu — NVIDIA CUDA (Windows / Linux)
+Windows: cài **Python 3.12 kèm Python Launcher** và Tesseract trước, mở CMD tại thư mục source rồi chạy:
 
-Yêu cầu: card NVIDIA, driver mới, **CUDA 12.x + cuDNN 9** (cài hệ thống hoặc qua pip như bên dưới), Tesseract trong `PATH` kèm đủ ngôn ngữ ở mục 1.
+```bat
+setup_windows.cmd --install
+```
 
-- Linux (Debian/Ubuntu): `sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-jpn tesseract-ocr-jpn-vert tesseract-ocr-chi-sim tesseract-ocr-chi-tra tesseract-ocr-kor tesseract-ocr-vie`
-- Windows: cài [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki), chọn đủ gói ngôn ngữ, thêm vào `PATH`.
+Linux: cài Python 3.12, gói venv và Tesseract trước rồi chạy:
 
 ```sh
-# 1. Tạo môi trường ảo
-python3.12 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-# 2. Dependency cơ bản
-pip install -r requirements.txt
-
-# 3. ONNX Runtime GPU — GỠ bản CPU trước, hai gói xung đột nhau
-pip uninstall -y onnxruntime
-pip install "onnxruntime-gpu>=1.23.2,<2"
-
-# 4. Thư viện CUDA qua pip (bỏ qua nếu đã cài CUDA 12 + cuDNN 9 ở hệ thống)
-pip install nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cudnn-cu12 \
-            nvidia-cufft-cu12 nvidia-curand-cu12
-
-# 5. (Tùy chọn) PyTorch CUDA cho Comic Text Mask / AOT inpainting
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-
-# 6. Weights profile 1107 và kiểm tra
-python manga_typesetter.py download-models --profile 1107
-python manga_typesetter.py doctor
+bash setup_linux.sh --install
 ```
 
-Ghi chú CUDA:
-
-- Trong `doctor`, mục `hardware.available_onnx_providers` phải có `CUDAExecutionProvider`. Nếu không, bạn đang dùng `onnxruntime` CPU hoặc thiếu thư viện CUDA/cuDNN.
-- Runtime tự nạp thư viện `nvidia/*/lib` cài bằng pip. Khi lỗi khởi tạo hoặc hết VRAM, nó tự fallback CPU và ghi log.
-- Bảng tương thích phiên bản chính thức: [ORT CUDA Execution Provider](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html).
-- Windows/NVIDIA chưa được xác thực native; hãy báo lại nếu gặp lỗi.
+Không chép `.venv` từ hệ điều hành khác. Linux chạy worker/CLI; giao diện Photoshop dành cho Windows/macOS. Xem [hướng dẫn chi tiết từng hệ điều hành, CUDA và khắc phục lỗi](docs/runtime/installation.md).
 
 ## 4. Tải model weights
 
-```sh
-python manga_typesetter.py download-models --profile 1107 --check-only   # kiểm tra offline
-python manga_typesetter.py download-models --profile 1107                # tải về models/
-```
-
-Luồng **Tự động** còn cần **Baberu OCR** (đọc chữ Nhật, profile `assist`):
+Weights **không nằm trong GitHub ZIP/clone**. Bộ cài ở trên tự tải profile `auto` (~650 MB, xem tổng chính xác khi chạy). Tải dở có thể chạy lại cùng lệnh; file đúng SHA-256 được giữ lại.
 
 ```sh
-python manga_typesetter.py download-models --profile assist
+# Dùng Python trong .venv; Windows thay .venv/bin/python bằng .venv\Scripts\python.exe
+.venv/bin/python manga_typesetter.py download-models --profile auto
+.venv/bin/python manga_typesetter.py download-models --profile auto --check-only
 ```
 
-Bấm **Kiểm tra môi trường** trong tab Tự động để biết còn thiếu gì. Máy cũng tự kiểm tra tất cả điều kiện (thư viện, Tesseract `jpn_vert`, model nhận diện, Baberu OCR, API key) **trước khi làm bất cứ việc gì**, và liệt kê đủ mọi mục thiếu kèm lệnh sửa, thay vì báo lỗi giữa chừng.
+Các profile cũ `1107`, `assist`, `preview`, `aot` vẫn dùng được. `1107` và `assist` có **Magi ~2 GB**, cần PyTorch và các thư viện liên quan; chỉ cài khi cần. Để cài cả thư viện cho profile tùy chọn, chạy bộ cài hệ điều hành với `--install --profile <tên>`. Profile `all` cài mọi model trong manifest, không bao gồm Qwen/MLX.
 
-Tab **Tự động** cần thêm model **LaMa** (206 MB, nằm trong profile `preview`; cả profile này tải khoảng 490 MB vì còn có CTD, mask chữ và Koharu layout) để vẽ lại nền ở các bong bóng trong suốt hoặc có tranh phía sau. Thiếu model này, máy chỉ dùng engine thường và nhiều bong bóng sẽ không được xoá chữ gốc:
-
-```sh
-python manga_typesetter.py download-models --profile preview
-```
-
-Profile 1107 tải bốn ONNX model (bubble, text detector, CTD, head) và model Magi (sắp xếp panel, khoảng **2 GB**, giấy phép phi thương mại), kiểm tra kích thước và SHA-256 theo revision được pin. Magi cần PyTorch và `transformers` đã nằm trong `requirements-ai.txt`; trên NVIDIA hãy cài `torch` bản CUDA trước (bước 5 ở mục 3) rồi mới cài `requirements-ai.txt`. Inference không bao giờ tự tải weights. Các profile `preview`, `assist`, `aot` là tùy chọn. Qwen (nhận diện font) vẫn cài riêng bằng `scripts/setup_heavy_assist.py`. Xem [model manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [notices upstream](models/NOTICE.md).
-
-`requirements*.lock.txt` ghi môi trường đã đo trên Mac; môi trường khác dùng file requirements thường để pip chọn wheel tương thích.
+Xem [manifest](models/manifest.json), [hướng dẫn weights](models/README.md), [giấy phép upstream](models/NOTICE.md). Không tự tải model trong lúc inference.
 
 ## 5. Kiểm tra môi trường
 
 ```sh
-.venv/bin/python manga_typesetter.py doctor        # Windows: .venv\Scripts\python.exe
+.venv/bin/python manga_typesetter.py doctor --profile auto --verify-models
 ```
 
-Báo cáo `ready: true` nghĩa là đủ package, Tesseract và ngôn ngữ OCR. Bạn cũng có thể chạy `Photoshop_CheckPython.jsx` trong Photoshop để kiểm tra đường Photoshop → Python; kết quả lưu ở `work/environment.json`.
+Windows dùng `.venv\Scripts\python.exe`. Lệnh kiểm tra model, checksum, khả năng **import thực tế** các thư viện, Tesseract và ngôn ngữ. Mã thoát khác 0 nghĩa là chưa sẵn sàng. `doctor` không có profile chỉ kiểm tra môi trường nền, không chứng minh đã đủ model. API key và style bộ truyện được cấu hình tiếp trong tool.
 
 ## 6. Luồng sử dụng trong Photoshop
 
@@ -191,7 +140,9 @@ python manga_typesetter.py --accel cpu scan /duong/dan/anh --out /duong/dan/xuat
 
 Font comic mẫu và giấy phép: [assets/fonts](assets/fonts/README.md).
 
-**Style theo bộ truyện:** tạo preset riêng, nhập JSON style TypeR và chọn cách xuống dòng trong Rà soát nhanh. Xem [hướng dẫn style và xuống dòng](docs/runtime/lettering_styles.md).
+**Style theo bộ truyện:** tạo preset riêng, nhập JSON style TypeR và tự chọn cách xuống dòng theo điểm bố cục khi typeset. Rà soát nhanh cho phép xem và chọn phương án khác. Xem [hướng dẫn style và xuống dòng](docs/runtime/lettering_styles.md).
+
+**Văn phong và xưng hô:** lưu quy tắc theo cặp nhân vật cho từng bộ truyện, dùng lại qua các vol và kiểm tra ngữ cảnh thêm sau mỗi nhóm dịch mới trong tab Tự động (tốn thêm lượt API). Xem [hướng dẫn ngữ cảnh và xưng hô](docs/runtime/dialogue_continuity.md).
 
 ## 7. Chọn phần cứng và tối ưu hiệu năng
 

@@ -29,6 +29,7 @@ jobs:
       - run: node tests/test_engine_review_ui.js
       - run: node tests/test_ui_modes.js
       - run: node tests/test_series_styles.js && node tests/test_style_manager_ui.js && node tests/test_review_lettering.js && node tests/test_review_style_ui.js
+      - run: node tests/test_dialogue_policy.js
       - run: node tests/chapter_dialog.js
       - run: python scripts/build_source_bundle.py --check
       - run: node tests/test_native_smoke.js
@@ -43,3 +44,29 @@ jobs:
           node tests/test_style_manager_ui.js
           node tests/test_review_lettering.js
           node tests/test_review_style_ui.js
+          node tests/test_dialogue_policy.js
+
+  setup-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt -r requirements-auto.txt
+      - run: python setup.py --plan
+      - run: python -m unittest discover -s tests -p test_installation.py -q
+      - run: python -m unittest discover -s tests -p test_model_downloads.py -q
+      - run: python -m unittest discover -s tests -p test_environment.py -q
+      - name: Verify Windows wrapper plan
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: setup_windows.cmd --plan
+      - name: Verify Unix wrapper syntax
+        if: runner.os != 'Windows'
+        run: bash -n setup_macos.command setup_linux.sh
