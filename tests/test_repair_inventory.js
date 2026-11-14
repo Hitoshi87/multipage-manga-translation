@@ -1,0 +1,26 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const data={};function File(path){this.fsName=path;this.name=path.split('/').pop();this.modified=new Date(100);}
+const older=new File('/out/draft_old.json'),newer=new File('/out/draft_new.json');newer.modified=new Date(200);
+const current=new File('/out/140_2.pdf'),obsolete=new File('/out/140.pdf'),psd=new File('/out/011.psd');
+data[older.fsName]=JSON.stringify({pages:[{manifest:'old-manifest',files:{pdf:'/old/140_2.pdf'}}]});
+data[newer.fsName]=JSON.stringify({pages:[{manifest:'new-manifest',files:{pdf:'/out/140_2.pdf',psd:'/out/011.psd'}}]});
+const ctx={File,MJSON:JSON,MTA:{read:file=>data[file.fsName]}};vm.createContext(ctx);vm.runInContext(fs.readFileSync('scripts/repair.jsxinc','utf8'),ctx);
+const folder={getFiles:q=>typeof q==='string'?[older,newer]:[current,obsolete,psd].filter(q)};
+const rows=ctx.MTARepair.inventory(folder);
+assert.strictEqual(rows.length,2);assert(rows.every(x=>x.page.manifest==='new-manifest'));
+assert(!rows.some(x=>x.file.name==='140.pdf'));
+assert.throws(()=>ctx.MTARepair.inventory({getFiles:()=>[]}),/checkpoint/);
+console.log('Bulk repair inventory follows latest checkpoint and excludes obsolete PDFs PASS');
+const source=fs.readFileSync('Photoshop_Typeset.jsx','utf8');let invoked=0,notice='';
+let options;
+const ui={repairExisting:{},renameNames:{},Folder:{selectDialog:()=>folder},run:fn=>fn(),tick:()=>true,
+  MTARepair:{runFolder(f,t,o){assert.strictEqual(f,folder);invoked++;options=o;return {folder:{fsName:'/out/SUA_THOAI'},log:{pages:[{status:'complete',replacements:o?2:0}]}};}},alert:s=>notice=s};
+vm.createContext(ui);vm.runInContext(source.slice(source.indexOf('        repairExisting.onClick='),source.indexOf('        var activeTaskDialog=')),ui);
+ui.repairExisting.onClick();assert.strictEqual(invoked,1);assert(notice.includes('Đã sửa 1 file'));
+console.log('Main script invokes bulk repair once per click PASS');
+ui.chooseNameRules=()=>[{from:'Ajisawa',to:'Shinjuku'}];ui.renameNames.onClick();
+assert.strictEqual(invoked,2);assert.strictEqual(options.names[0].to,'Shinjuku');assert(notice.includes('đổi 2 lượt tên'));
+console.log('Main script invokes name replacement with selected rules PASS');
+ui.chooseNameRules=()=>({names:[{from:'Shinjuku',to:'Shinjuku',dropAfter:'Takumi'}],stripHonorifics:true});
+ui.renameNames.onClick();assert.strictEqual(options.stripHonorifics,true);assert.strictEqual(options.names[0].dropAfter,'Takumi');
+console.log('Main script passes honorific and tail-shortening settings PASS');

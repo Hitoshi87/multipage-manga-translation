@@ -10,7 +10,7 @@ Bạn có thể cung cấp bản dịch hoặc thử tính năng dịch AI tùy 
 
 | Thành phần | Bản hiện tại |
 | --- | --- |
-| Giao diện Photoshop | `1107-ui.4` |
+| Giao diện Photoshop | `1107-ui.5` |
 | Engine tùy chọn | `1107-shadow-0.5` — output cần duyệt |
 | Engine mặc định | `baseline-1` |
 | Đã kiểm thử thực tế | Apple M4 (macOS ARM64, CoreML), NVIDIA RTX 3050 (Linux, CUDA). Windows/NVIDIA chưa xác thực native |
@@ -154,9 +154,15 @@ Nếu Photoshop dừng giữa chừng, mở lại Photoshop và script, chọn �
 
 Trên macOS có nút **Chạy dài tự phục hồi (macOS)** để chạy trực tiếp cả chương bằng bộ giám sát độc lập. Đóng tất cả tài liệu Photoshop trước khi bấm. Để tiếp tục một lượt cũ, chọn đúng thư mục ảnh và thư mục kết quả trước đó; script tự dùng lại cấu hình dịch và engine clean đã lưu trong project, thông báo cấu hình trước khi chạy. Script lưu cấu hình không chứa API key, xuất và ghi checkpoint theo nhóm tối đa bốn trang, sau đó đóng và mở lại Photoshop để giải phóng bộ nhớ tích tụ. Bộ giám sát lấy mẫu RAM thường trú của Photoshop; nếu vượt ngưỡng bằng 35% RAM vật lý (giới hạn trong khoảng 1–6 GiB), script hoàn tất và ghi checkpoint trang hiện tại, khởi động lại Photoshop rồi giảm nhóm tiếp theo còn một trang; nhóm tăng dần lại khi tải thấp. Sau crash cũng thử lại từng trang, tối đa ba lần thoát liên tiếp tại cùng nhóm. Các trị số RAM và ngưỡng được ghi trong `supervisor_status.json`. Thư mục trạng thái được hiển thị khi bắt đầu: xem thêm `progress.json`, `supervisor.log`; mở `Dung.command` để yêu cầu dừng an toàn. Nếu trạng thái là `needs_attention`, danh sách `pending_pages` cho biết trang lỗi, thiếu mapping hoặc file xuất không hợp lệ; kiểm tra và chạy lại để thử tiếp. Không tắt máy hoặc xóa thư mục project, `work/` trong lúc chạy.
 
+Nếu API trả lỗi xác thực 401/403 hoặc chưa có key, trạng thái là `waiting_auth`: bộ giám sát giữ checkpoint và chờ tối đa 12 giờ, không liên tục gọi lại API. Cập nhật key trong giao diện script và đóng giao diện để tự thử tiếp; nếu đã sửa quyền ở phía nhà cung cấp mà không đổi key, mở `Tiep_tuc.command` trong thư mục trạng thái. Nếu key đến từ biến môi trường, biến đó được ưu tiên hơn key nhập trong giao diện; cần cập nhật môi trường và chạy lại Photoshop. Có thể mở `Dung.command` để dừng chờ. Khi gateway trả HTTP 200 nhưng nội dung là `Upstream temporarily unavailable, please retry.`, bộ giám sát chuyển sang `waiting_api`, giữ nhóm chưa dịch và tự thử lại với thời gian chờ tăng từ 30 giây đến tối đa 5 phút; lỗi dịch vụ này không trừ số lần thử của nhóm. File `progress.json` hiển thị trạng thái chờ thay cho trang cuối cùng.
+
+Nếu một trang lớn **chưa được index** chỉ đổi tên, chế độ giám sát có thể nhận lại project cũ khi tên cũ đã được ghi trong tác vụ trước, thứ tự trang không đổi và dấu vân tay metadata (tên, dung lượng, thời gian sửa) khớp. Khi điều này xảy ra trong lúc chạy, script cập nhật checkpoint cấu hình và tiếp tục; khi bắt đầu lại thủ công, hộp thoại cho biết tên cũ và tên mới. Cách kiểm tra này không xác minh nội dung file bằng hash. Trường hợp không xác định được an toàn, script báo lỗi thay vì tự chạy lại từ đầu trong thư mục cũ; hãy khôi phục tên và ảnh ban đầu hoặc chọn thư mục kết quả mới.
+
 Trước khi chạy có giám sát, script đọc kích thước từ header ảnh và tách riêng các trang có dữ liệu pixel thô ước tính từ 64 MiB trở lên, file PSD/PSB và file không đọc được header. Photoshop được khởi động lại giữa các nhóm, nên trang lớn được xử lý riêng sau checkpoint. Ước tính này chỉ dùng để xếp lịch; layer và bản sao làm việc có thể cần thêm nhiều RAM.
 
 Khi xong, dừng hoặc cần xử lý, bộ giám sát gửi thông báo macOS nếu hệ thống cho phép; `supervisor_status.json` vẫn là nguồn trạng thái chính nếu thông báo bị tắt. Khi macOS báo bộ nhớ khả dụng toàn hệ thống dưới 20%, script yêu cầu checkpoint sớm; trước trang tiếp theo, bộ giám sát chờ đến ít nhất 25% trong tối đa 5 phút, sau đó dừng an toàn nếu vẫn thiếu. Nếu macOS không cung cấp số liệu này, chỉ cơ chế theo dõi RAM Photoshop được dùng. Photoshop có thể chờ hộp thoại khởi động, quyền Apple Events hoặc có tài liệu khác được mở trong lúc chạy. Khi không thể khởi động hoặc đóng an toàn, bộ giám sát dừng và ghi lỗi; hãy xử lý hộp thoại, kiểm tra trạng thái rồi chạy lại thủ công. Chế độ này hiện cần kiểm thử thêm trên nhiều máy. Các ngưỡng là tín hiệu yêu cầu dừng ở checkpoint trang gần nhất; lấy mẫu có thể bỏ sót đỉnh ngắn. Việc dọn cache và khởi động lại giảm bộ nhớ tích tụ nhưng không đặt giới hạn RAM cứng cho một trang lớn. Trong luồng dịch cả tập, cả worker scan, clean và dịch của cùng project được chạy tuần tự, kể cả khi đổi giữa chạy thường và chạy có giám sát: worker mới chờ worker cũ hoàn tất sau crash. Giữ file `.lock` cạnh project và các file khóa trong thư mục tác vụ; file khóa không có nghĩa là worker vẫn đang chạy. Bảo đảm ổ đĩa kết quả và scratch disk hoạt động ổn định và còn chỗ trống.
+
+Nếu Photoshop vừa mở lại nhưng macOS tạm trả lỗi AppleScript `-600`, bộ giám sát thử kết nối lại tối đa ba lần. Trước khi thử lại, nó vô hiệu hóa lượt cũ và kiểm tra rằng Photoshop đã xử lý hết lệnh trước; nếu không xác minh được, tác vụ dừng tại checkpoint để tránh chạy trùng.
 
 Chế độ **Chất lượng** gửi ảnh vùng thoại tới API đã chọn. Với vùng chưa xác nhận chứa số, cụm chữ Hán dài có thể chứa tên, hoặc chữ hiệu ứng nghi bị nhập vào thoại, hệ thống gửi thêm ảnh cận theo nhóm tối đa 8 vùng/trang để đề xuất cách đọc và furigana độc lập; các đề xuất không tự xác nhận OCR và số vẫn được đưa vào báo cáo cần kiểm tra. Chế độ này tốn thêm thời gian và chi phí API. Nếu MAGI đã cài, script ưu tiên MAGI để sắp thứ tự đọc; kiểm tra điều khoản sử dụng của model trong [models/NOTICE.md](models/NOTICE.md).
 
@@ -202,9 +208,24 @@ Batch nhiều trang: script tự gọi `app.purge(PurgeTarget.ALLCACHES)` sau m�
 
 ## 8. Xuất file và dung lượng
 
+Lượt dịch mới dùng mặc định 6 câu ngữ cảnh nguồn thay vì 2 câu. Trước mỗi nhóm, tool bổ sung các cặp Nhật–Việt đã dịch ở những câu ngữ cảnh đó, chỉ lấy nhóm hoàn tất trước nhóm hiện tại và có revision nguồn còn khớp. Bản nháp được đánh dấu là chưa xác nhận, không biến thành chứng cứ về danh tính người nói. Ngữ cảnh bổ sung nằm trong giới hạn ký tự đầu vào; không gọi thêm API để rà văn phong. Prompt yêu cầu giữ xưng hô cho cùng quan hệ người nói–người nghe, kiểm tra nhịp đối đáp và giữ mức trang trọng theo cảnh. Có thể ghi quy tắc xưng hô đã xác nhận của từng cặp nhân vật trong **Quy tắc Việt hóa / Glossary**; không có đủ bằng chứng thì câu vẫn cần duyệt. Bộ rút gọn từ chối đề xuất đưa thêm từ xưng hô mới.
+
+Mặc định bản dịch mới tự bỏ kính ngữ có gạch nối `-san/-kun/-chan/-sama/-senpai/-sensei/-dono` ở mọi tên, kể cả tên không nhập trong 3 cặp sửa thủ công. Prompt yêu cầu Việt hóa mức lịch sự theo cảnh thay vì giữ hậu tố hoặc tự thêm quan hệ anh/em. Hậu xử lý xác định loại bỏ hậu tố còn sót và giữ nguyên bản trả lời gốc trong `provider_translation` cùng `text_adjustments` để đối chiếu. Placeholder/markup và các từ đứng riêng được giữ nguyên. Có thể tắt trong cấu hình profile nếu chủ ý giữ hậu tố. Cải tiến không tự sửa bản dịch/human approval hoặc prompt của lượt cũ đang tiếp tục; mở lại script và tạo lượt mới cho volume sau.
+
+Thoại mặc định là chữ ngang **Paragraph Text**, có khung kéo chỉnh bằng **Horizontal Type Tool (T)** trong Photoshop. Chữ mới dùng scale ngang/dọc 100%, tracking và baseline shift bằng 0, không kế thừa faux bold/italic hoặc All Caps từ lần dùng Type Tool trước; tùy chọn in hoa của script vẫn áp dụng khi được bật. Giãn dòng tự động tối thiểu 130%, tăng theo chiều cao nét và dấu tiếng Việt thực của từng font; chế độ nhập tay cũng giữ khoảng hở tối thiểu để các dòng không chạm nhau. Thay đổi áp dụng khi dàn chữ/xuất lại. Để giữ khung thoại khi mở lại, dùng PSD hoặc PDF giữ layer.
+
+Để sửa file đã xuất, vào tab **Typeset**, bấm **Sửa hàng loạt PDF/PSD cũ: khung thoại + giãn dòng**, chọn thư mục kết quả có `draft_*.json` (ví dụ `PDF 2`). Tool lấy bản dịch từ layer chữ và tọa độ từ manifest đã lưu, không OCR/clean/dịch lại. Bản sửa giữ layer và nằm trong thư mục con `SUA_THOAI`, cùng `repair_log.json`. Chạy lại cùng thư mục để bỏ qua bản đã sửa thành công và tiếp tục trang còn lại. File đang mở, PDF đã flatten, mất manifest hoặc style không thể khớp được ghi lỗi để duyệt; đóng file đang mở rồi chạy lại để sửa trang đó.
+
+Nút **Đổi tên nhân vật hàng loạt (tối đa 3 tên)** trong tab **3. Typeset & xuất** cho nhập tối đa ba cặp tên cũ → tên mới, ví dụ `Ajisawa → Shinjuku`. Chỉ khớp trọn tên, không phân biệt hoa/thường; tên viết HOA/thường được thay theo kiểu tương ứng. Các cặp áp dụng một lượt, không thay dây chuyền; nếu trùng một phần tên thì ưu tiên tên dài hơn. Tool dàn lại những thoại đổi tên để vừa khung, giữ màu/hiệu ứng và layer chữ. Chọn `PDF 2`, `SUA_THOAI` hoặc thư mục `DOI_TEN` có log liên kết checkpoint gốc. Kết quả nằm trong thư mục con `DOI_TEN`, kèm `rename_log.json`; các trang không đổi tên được sao chép sang để có bộ trang đầy đủ. Chạy lại cùng thư mục và cùng cặp tên sẽ tiếp tục theo checkpoint. Đổi cặp tên sẽ tạo bản xuất mới, không ghi đè bản cũ. Chỉ đổi tên trong layer thoại của file xuất, không sửa dữ liệu bản dịch trong project và không gọi API.
+
+Mỗi cặp có thêm ô **Bỏ phần sau**: nhập `Takumi` để rút `Shinjuku Takumi` thành `Shinjuku`. Bật **Bỏ kính ngữ có gạch nối: -san, -kun, -chan, -sama, -senpai, -sensei, -dono** để xóa kính ngữ đứng ngay sau tên cũ hoặc tên mới; nhận các kiểu gạch nối `-san`, `- kun`, `–SAN`. Không tự xóa từ đứng riêng không có gạch nối để tránh nhầm các từ tiếng Việt như “san lấp”, “chan canh”. Ví dụ một cặp `Ajisawa → Shinjuku`, phần bỏ `Takumi`, bật bỏ kính ngữ sẽ đổi `Ajisawa Takumi-san` và rút `Shinjuku Takumi-kun` về `Shinjuku`. Chỉ rút tên đã đúng thì nhập `Shinjuku → Shinjuku`. Phần `Takumi` và các từ như `san` đứng riêng ở chỗ khác được giữ nguyên. Bật thêm **Áp dụng bỏ kính ngữ cho MỌI tên** để dọn hậu tố ở các nhân vật không nằm trong 3 cặp; có thể để trống cả 3 cặp nếu chỉ dọn kính ngữ. Giới hạn 3 cặp chỉ áp dụng đổi tên/rút phần tên, không giới hạn số tên được dọn hậu tố. Thiết lập bỏ kính ngữ/phần tên được lưu trong log; thay thiết lập sẽ xuất bản mới thay vì bỏ qua theo checkpoint cũ.
+
+Phần dàn chữ dùng cache số đo font/từ có giới hạn và bỏ bước kiểm tra layer lặp trong lượt ước lượng cỡ chữ; lượt cuối vẫn kiểm tra biên thực trong Photoshop. Đo trên Photoshop 26.11.7 với 6 thoại, 3 font, cùng giãn dòng/cỡ chữ và hai lượt ước lượng + đặt chữ: 19,161 giây trước sửa, 14,470 giây sau sửa (giảm khoảng 24%). Số này chỉ đo dàn chữ, không gồm OCR, dịch API, clean hoặc lưu file.
+
 - **PSD**: giữ layer, nhúng profile màu.
 - **PDF (gọn, flatten)**: mặc định, nén JPEG chất lượng cao, không nhúng thumbnail, không giữ layer; dung lượng gần với lưu tay. Cần chỉnh sửa thì dùng PSD.
 - **PDF giữ layer**: tùy chọn riêng, nhúng toàn bộ PSD nên rất nặng (có thể hàng chục MB mỗi trang).
+- Khi lưu lỗi, script thử lại qua thư mục tạm và ghi lỗi vào log. PDF giữ layer không tự chuyển sang PDF phẳng hoặc bỏ hiệu ứng chữ để che lỗi lưu; file lỗi cần xem lại, bản gốc được giữ.
 - **JPEG**: flatten, chất lượng 10; **PNG**: RGB.
 
 ## 9. Engine 1107 làm gì
@@ -244,3 +265,16 @@ Unit test dùng fixture tổng hợp; CI không tải weights hoặc ảnh truy�
 ## License
 
 Source code chưa được cấp license chung. Model và thành phần upstream có điều khoản riêng trong [models/NOTICE.md](models/NOTICE.md); không gán license source thay cho license weights. Không phân phối weights trong Git.
+
+### Dung lượng cache làm việc
+
+`work/pages/` giữ `original.png`, manifest, mask và ảnh trung gian cho OCR, clean, kiểm tra lại nguồn và sửa PDF/PSD cũ. Không xóa cả `work/` khi còn project cần tiếp tục hoặc chỉnh sửa. Snapshot kiểm tra nguồn được dọn ngay sau khi xác minh thành công; snapshot scan mới dùng PNG nén lossless.
+
+Để thu nhỏ snapshot cũ mà giữ nguyên dữ liệu ảnh và các chunk metadata:
+
+```sh
+python scripts/compact_png_cache.py --root work/pages --report work/png-cache-audit.json
+python scripts/compact_png_cache.py --root work/pages --apply --workers 2 --report work/png-cache-compaction.json
+```
+
+Lệnh đầu chỉ kiểm tra. Lệnh có `--apply` chỉ thay file nếu nén nhỏ hơn và xác minh dữ liệu ảnh giải nén cùng metadata khớp byte-for-byte; file đổi trong lúc nén, file lỗi hoặc symlink được giữ. Không xóa project, PDF/PSD, models hoặc môi trường Python. `scripts/clean_generated.py --apply` chỉ dọn Python cache/Finder metadata, không dọn cache trang còn tham chiếu.

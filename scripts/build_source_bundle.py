@@ -27,10 +27,11 @@ FILES = (
     'assets/fonts/sriracha/Sriracha-Regular.ttf', 'assets/fonts/sriracha/OFL.txt',
     # Shared by the Python and JS lettering tests.
     'tests/fixtures/textnorm_cases.json',
+    'tests/fixtures/honorific_cases.json',
 )
 SCRIPTS = (
-    'core.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
-    'clean_generated.py', 'setup_ai.py', 'setup_aot.py', 'setup_assist_models.py',
+    'core.jsxinc', 'repair.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
+    'clean_generated.py', 'compact_png_cache.py', 'setup_ai.py', 'setup_aot.py', 'setup_assist_models.py',
     'setup_heavy_assist.py', 'setup_preview_models.py',
     'audit_fill_color.py', 'bubble_crop_compare.py', 'bubble_decision_trace.py', 'benchmark_ocr.py',
     # Thin compatibility adapter covered by the ownership regression suite.

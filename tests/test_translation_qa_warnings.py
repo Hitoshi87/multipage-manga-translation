@@ -53,6 +53,12 @@ if __name__ == '__main__':
 
 
 class ProviderRobustnessTests(unittest.TestCase):
+    def test_gateway_outage_inside_http_200_is_not_a_translation(self):
+        body = json.dumps({'choices': [{'finish_reason': 'stop', 'message': {
+            'content': 'Upstream temporarily unavailable, please retry.'}}]}).encode()
+        with self.assertRaisesRegex(ValueError, 'API upstream temporarily unavailable'):
+            self._call([body])
+
     def _call(self, bodies, retries=1):
         import io
         import os

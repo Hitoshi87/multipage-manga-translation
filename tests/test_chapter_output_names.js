@@ -15,6 +15,7 @@ function Folder(path) { this.fsName = path; this.exists = true; }
 Folder.temp = new Folder('/tmp');
 const ctx = {
   File, Folder,
+  app: {displayDialogs:'ALL'}, DialogModes:{NO:'NO'},
   PDFSaveOptions: function () {},
   PhotoshopSaveOptions: function () {},
   PDFEncoding: {JPEGHIGH: 'jpeg'},
@@ -47,9 +48,10 @@ const docWithCorruptPdfLayer = {
     existing.add(file.fsName);
   }
 };
-ctx.MTA.saveCopy(docWithCorruptPdfLayer, out, '081.jpeg', {psd: false, pdf: true, pdfLayers: true}, 'chapter', files);
-assert.strictEqual(files.pdf, '/out/081.pdf', 'falls back to flat PDF via temp file when layered PDF save throws disk error (-1)');
-assert.deepStrictEqual(layerAttempts, [true, true, false]);
+assert.throws(()=>ctx.MTA.saveCopy(docWithCorruptPdfLayer, out, '081.jpeg', {psd: false, pdf: true, pdfLayers: true}, 'chapter', files),/disk error/);
+assert.strictEqual(existing.has('/out/081.pdf'),false,'failed editable export must not silently produce a flat PDF');
+assert.deepStrictEqual(layerAttempts, [true, true]);
+assert.strictEqual(ctx.app.displayDialogs,'ALL');
 
 const source = fs.readFileSync('Photoshop_Typeset.jsx', 'utf8');
 assert(source.includes('draft:true,chapterOutput:!!cfg.streamLimit'), 'full chapter keeps draft review status');

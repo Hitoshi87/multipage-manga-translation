@@ -151,6 +151,17 @@ end run'''.replace('APP_LITERAL', application_literal(app_path))
         raise RuntimeError('Không thể khởi động lại Photoshop an toàn: ' + result.stderr.strip())
 
 
+def javascript_barrier(app_path, timeout=20):
+    """Wait behind any previously delivered JavaScript before retrying an event."""
+    script = ('tell application ' + application_literal(app_path) +
+              ' to do javascript "\'MTA_READY\'"')
+    try:
+        result = applescript(script, timeout=timeout)
+        return result.returncode == 0 and result.stdout.strip() == 'MTA_READY'
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def select_process(app_path=None):
     processes = photoshop_processes()
     if app_path:
@@ -191,6 +202,7 @@ def notify_user(state):
         'cancelled': 'Tác vụ đã dừng tại checkpoint.',
         'failed': 'Tác vụ đã dừng vì lỗi. Xem supervisor_status.json để tiếp tục.',
         'waiting_memory': 'Máy đang thiếu bộ nhớ; tác vụ chờ tại checkpoint.',
+        'waiting_auth': 'API từ chối xác thực. Cập nhật API key hoặc quyền truy cập để tiếp tục.',
     }
     if sys.platform != 'darwin' or state not in messages:
         return
@@ -201,6 +213,47 @@ end run'''
         applescript(script, messages[state], timeout=5)
     except (OSError, subprocess.SubprocessError):
         pass  # The durable status file is authoritative even without permission.
+
+
+def credential_version(key_env):
+    """Track the source and file metadata only; never expose the credential."""
+    if not isinstance(key_env, str) or not key_env.isidentifier():
+        raise ValueError('Tên biến API key không hợp lệ')
+    if os.environ.get(key_env):
+        return ('environment', None)
+    from .translation.providers import key_file
+    try:
+        stat = key_file(key_env).stat()
+        return ('file', (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns))
+    except FileNotFoundError:
+        return ('missing', None)
+
+
+def wait_for_auth_repair(job, directory, state, status_path, before, *, sleep=time.sleep,
+                         now=time.monotonic, timeout=12*60*60):
+    """Wait for changed key metadata or an explicit retry, without API polling."""
+    key_env = job.get('profile', {}).get('key_env', 'MANGA_TRANSLATION_API_KEY')
+    cancel, retry = directory/'cancel', directory/'resume'
+    state.update(state='waiting_auth', credential_source=before[0],
+                 message='API từ chối xác thực. Cập nhật key/quyền hoặc mở Tiep_tuc.command; Dung.command để dừng.')
+    write_json(status_path, state)
+    if job.get('progress'):
+        # Replace the last page message so a paused API request does not look
+        # like repeated processing of that page in the progress viewer.
+        write_json(Path(job['progress']), {'message': state['message'],
+                   'state': 'waiting_auth', 'at': int(time.time() * 1000)})
+    notify_user('waiting_auth')
+    deadline = now() + timeout
+    while now() < deadline:
+        if cancel.exists():
+            return False
+        if retry.exists():
+            retry.unlink()
+            return True
+        if credential_version(key_env) != before:
+            return True
+        sleep(5)
+    raise RuntimeError('Chờ sửa xác thực API quá 12 giờ; checkpoint vẫn được giữ.')
 
 
 def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
@@ -222,6 +275,8 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
              'batch_size': 4, 'memory_limit_kib': physical_memory_limit_kib(),
              'peak_photoshop_rss_kib': 0}
     low_memory_batches = 0
+    launch_failures = 0
+    upstream_failures = 0
     write_json(status_path, state)
 
     def wait_for_memory():
@@ -257,13 +312,14 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
         attempt = uuid.uuid4().hex
         attempt_path = directory / ('attempt_' + attempt + '.json')
         started = directory / ('attempt_' + attempt + '.started')
+        revoked = directory / ('attempt_' + attempt + '.revoked')
         pressure = directory / ('attempt_' + attempt + '.pressure')
         bootstrap = directory / ('attempt_' + attempt + '.jsx')
         # Explicit string literals; no secrets in the bootstrap or job settings.
-        bootstrap.write_text('if (!(new File('+json.dumps(str(cancel_path), ensure_ascii=True)+')).exists) {'+
+        bootstrap.write_text('if (!(new File('+json.dumps(str(cancel_path), ensure_ascii=True)+')).exists && !(new File('+json.dumps(str(revoked), ensure_ascii=True)+')).exists) {'+
                              'var started=new File('+json.dumps(str(started), ensure_ascii=True)+');'+
                              'if(!started.open("w"))throw Error("Cannot write start marker");started.write("started");started.close();'+
-                             'if (!(new File('+json.dumps(str(cancel_path), ensure_ascii=True)+')).exists) {'+
+                             'if (!(new File('+json.dumps(str(cancel_path), ensure_ascii=True)+')).exists && !(new File('+json.dumps(str(revoked), ensure_ascii=True)+')).exists) {'+
                              '$.global.MTA_SUPERVISED_JOB=' + json.dumps(str(job_path), ensure_ascii=True) +
                              ';$.global.MTA_SUPERVISED_SCOPE=' + json.dumps(str(job.get('project', job_path)), ensure_ascii=True) +
                              ';$.global.MTA_SUPERVISED_RESULT=' + json.dumps(str(attempt_path), ensure_ascii=True) +
@@ -276,6 +332,7 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
                              '$.global.MTA_SUPERVISED_BATCH_SIZE=null;$.global.MTA_SUPERVISED_PRESSURE=null;}}}', encoding='utf-8')
         state.update(state='running', pid=pid, attempt=attempt, message='')
         write_json(status_path, state)
+        credential_before = credential_version(job.get('profile', {}).get('key_env', 'MANGA_TRANSLATION_API_KEY'))
         result = launch_attempt(app_path, bootstrap, started=started, cancel=cancel_path, pid=pid,
                                 pressure=pressure, memory_limit_kib=state['memory_limit_kib'])
         peak = max(0, int(getattr(result, 'peak_rss_kib', 0) or 0))
@@ -295,6 +352,24 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
                 response = read_json(attempt_path)
             except (OSError, ValueError):
                 pass
+        if response and response.get('state') == 'failed' and re.search(r'API HTTP (401|403)|Chưa có API key', str(response.get('message', ''))):
+            if not wait_for_auth_repair(job, directory, state, status_path, credential_before, sleep=sleep):
+                state.update(state='cancelled')
+                break
+            continue
+        if response and response.get('state') == 'failed' and 'API upstream temporarily unavailable' in str(response.get('message', '')):
+            upstream_failures += 1
+            delay = min(300, 30 * 2 ** min(upstream_failures - 1, 4))
+            state.update(state='waiting_api', api_retries=upstream_failures,
+                         message='Dịch vụ API tạm ngừng; giữ checkpoint và tự thử lại sau '+str(delay)+' giây.')
+            write_json(status_path, state)
+            if job.get('progress'):
+                write_json(Path(job['progress']), {'state': 'waiting_api', 'message': state['message'], 'at': int(time.time()*1000)})
+            for _ in range(delay):
+                if cancel_path.exists():
+                    break
+                sleep(1)
+            continue
         if response and response.get('state') in ('complete', 'needs_attention', 'failed', 'cancelled'):
             state.update(state=response['state'], message=response.get('message', ''))
             if 'summary' in response:
@@ -309,6 +384,8 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
             if not isinstance(next_cursor, int) or next_cursor <= state['cursor']:
                 raise RuntimeError('Checkpoint giám sát không tiến triển; đã dừng.')
             state['cursor'] = next_cursor
+            launch_failures = 0
+            upstream_failures = 0
             state['crashes'] = 0
             if peak >= state['memory_limit_kib'] or (min_free is not None and min_free < 20):
                 state['batch_size'] = 1
@@ -340,6 +417,37 @@ def run_job(job_path, *, sleep=time.sleep, max_crashes=3):
         if cancel_path.exists():
             state.update(state='cancelled')
             break
+        # Photoshop can briefly exist before its Apple-event endpoint is ready.
+        # Only retry -600 when our script has not started. Revoke this wrapper,
+        # then send a harmless JS barrier; if the old event was queued or active,
+        # the barrier cannot pass it unnoticed. Never replay an active script.
+        error_text = str(getattr(result, 'stderr', '') or '')
+        if '(-600)' in error_text and not started.exists() and process_alive(pid, app_path):
+            revoked.touch()
+            launch_failures += 1
+            if launch_failures > 3:
+                raise RuntimeError('Photoshop chưa sẵn sàng nhận lệnh sau 3 lần thử; checkpoint vẫn được giữ.')
+            state.update(state='waiting_photoshop', launch_retries=launch_failures,
+                         message='Photoshop đang khởi động; chờ kết nối lại an toàn.')
+            write_json(status_path, state)
+            sleep(3 * launch_failures)
+            if cancel_path.exists():
+                state.update(state='cancelled')
+                break
+            fenced = False
+            for probe in range(3):
+                if cancel_path.exists() or started.exists() or not process_alive(pid, app_path):
+                    break
+                if javascript_barrier(app_path):
+                    fenced = True
+                    break
+                sleep(3 * (probe + 1))
+            if cancel_path.exists():
+                state.update(state='cancelled')
+                break
+            if fenced and not started.exists() and process_alive(pid, app_path):
+                continue
+            raise RuntimeError('Không xác minh được lệnh trước đã dừng; đã giữ checkpoint và không chạy trùng.')
         # Never replay a possibly running AppleScript against a live Photoshop.
         if process_alive(pid, app_path):
             raise RuntimeError('Photoshop còn chạy nhưng tác vụ không trả checkpoint: ' + result.stderr.strip())

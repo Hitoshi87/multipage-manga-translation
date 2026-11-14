@@ -19,6 +19,73 @@ class WorkflowTest(unittest.TestCase):
     def provider(self, profile, prompt, payload):
         return json.dumps({'translations':[{'id':x['id'],'vi':'Xin chào','flags':[]} for x in payload['segments']]}), {'usage':{'total_tokens':10},'latency_ms':1,'model_returned':'mock'}
 
+    def test_malformed_response_keeps_bounded_diagnostic_without_completing_group(self):
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        with patch.object(service, 'call_provider', return_value=('gateway failure ' * 200, {})):
+            with self.assertRaisesRegex(ValueError, 'Invalid translation JSON'):
+                service.run_group(self.project, run['id'], group['id'])
+        saved=service.load(self.project)['runs'][-1]['groups'][0]
+        self.assertEqual(saved['status'], 'failed')
+        self.assertEqual(len(saved['attempts'][-1]['response_excerpt']), 1000)
+
+    def test_new_run_removes_all_name_suffixes_and_keeps_provider_text(self):
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        raw=json.dumps({'translations':[{'id':group['targets'][0]['id'],'vi':'Ajisawa-san và Yuki-kun.','flags':[]}]})
+        with patch.object(service,'call_provider',return_value=(raw,{})):
+            result=service.run_group(self.project,run['id'],group['id'])['data']['results'][0]
+        self.assertEqual(result['semantic_translation'],'Ajisawa và Yuki.')
+        self.assertEqual(result['provider_translation'],'Ajisawa-san và Yuki-kun.')
+        self.assertEqual(result['text_adjustments'][0]['count'],2)
+
+    def test_old_frozen_run_is_not_silently_postprocessed(self):
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        state=service.load(self.project);state['runs'][-1].pop('translation_quality_version');state['runs'][-1]['compiled_system']='Legacy frozen prompt'
+        service.save(self.project,state)
+        raw=json.dumps({'translations':[{'id':group['targets'][0]['id'],'vi':'Ken-san.','flags':[]}]})
+        with patch.object(service,'call_provider',return_value=(raw,{})):
+            result=service.run_group(self.project,run['id'],group['id'])['data']['results'][0]
+        self.assertEqual(result['semantic_translation'],'Ken-san.')
+
+    def test_explicit_keep_suffix_policy(self):
+        service.save_profile(self.project,{'group_size':1,'strip_honorifics':False})
+        run=service.prepare(self.project)['data'];group=run['groups'][0]
+        raw=json.dumps({'translations':[{'id':group['targets'][0]['id'],'vi':'Ken-san.','flags':[]}]})
+        with patch.object(service,'call_provider',return_value=(raw,{})):
+            result=service.run_group(self.project,run['id'],group['id'])['data']['results'][0]
+        self.assertEqual(result['semantic_translation'],'Ken-san.')
+
+    def test_bilingual_context_uses_completed_previous_group_without_extra_calls(self):
+        run=service.prepare(self.project)['data'];first,second=run['groups'];payloads=[]
+        def provider(profile,prompt,payload):
+            payloads.append(payload)
+            return json.dumps({'translations':[{'id':t['id'],'vi':'Tôi chào cậu.','flags':[]} for t in payload['segments']]}),{}
+        with patch.object(service,'call_provider',side_effect=provider) as call:
+            service.run_group(self.project,run['id'],first['id'])
+            result=service.run_group(self.project,run['id'],second['id'])['data']
+        self.assertEqual(call.call_count,2)
+        self.assertNotIn('prior_translations',payloads[0])
+        self.assertEqual(payloads[1]['prior_translations'][0]['vi'],'Tôi chào cậu.')
+        self.assertEqual(payloads[1]['prior_translations'][0]['speaker']['status'],'unknown')
+        self.assertEqual(result['attempts'][-1]['context_translation_ids'],[first['targets'][0]['id']])
+
+    def test_bilingual_context_cannot_exceed_input_limit(self):
+        service.save_profile(self.project,{'group_size':1,'max_input_chars':16000})
+        run=service.prepare(self.project)['data'];first,second=run['groups'];payloads=[]
+        def provider(profile,prompt,payload):
+            self.assertLessEqual(len(prompt)+len(json.dumps(payload,ensure_ascii=False)),16000)
+            payloads.append(payload)
+            return json.dumps({'translations':[{'id':t['id'],'vi':'a'*6000,'flags':[]} for t in payload['segments']]}),{}
+        with patch.object(service,'call_provider',side_effect=provider):
+            service.run_group(self.project,run['id'],first['id']);service.run_group(self.project,run['id'],second['id'])
+        self.assertNotIn('prior_translations',payloads[1])
+
+    def test_legacy_profile_roundtrip_keeps_revision(self):
+        state=service.load(self.project);values=state['profiles'][-1]['values'];values.pop('strip_honorifics');values['context_segments']=2
+        state['profiles'][-1]['revision']=service.digest(values);service.save(self.project,state)
+        result=service.save_profile(self.project,values)['data']
+        self.assertEqual(result['revision'],state['profiles'][-1]['revision'])
+        self.assertEqual(len(service.load(self.project)['profiles']),1)
+
     def test_unverified_numerals_are_queued_for_review(self):
         run=service.prepare(self.project)['data'];group=run['groups'][0]
         with patch.object(service,'call_provider',side_effect=self.provider):

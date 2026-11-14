@@ -70,7 +70,7 @@ assert(source.includes('easyKeepPsd.value=false'));
 assert(source.includes("chooseFontById(font,'Pangolin-Regular')"),'automatic tab picks an installed comic font');
 // Line spacing is Auto by default; the number is used only when Auto is unticked.
 assert(source.includes("leadingAuto.value = true"));
-assert(source.includes('autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.05 : Number(leading.text)'));
+assert(source.includes('autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.30 : Number(leading.text)'));
 console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, dependencies, one review toggle and real preview dispatch PASS');
 
 // rpc() returns response.result as is. Operations returning a plain dict have no `.data`; reading it gives undefined
@@ -197,6 +197,19 @@ console.log('Four-tab UI: engine locks, busy restore, clean/typeset modes, depen
     assert.strictEqual(volumeCtx.activeWorkerScope,null,'worker scope is restored after an error');
     assert(!calls.includes('translation_autopilot'),'do not start a second worker while the timed-out one may still be alive');
     volumeCtx.detect=()=>({manifestPath:'/tmp/manifest.json'});
+    const originalBuild=volumeCtx.build;
+    volumeCtx.build=()=>{throw Error('must not export missing translations');};
+    volumeCtx.rpc=req=>{
+      if(req.operation==='translation_load')return {pages:[],runs:[{id:'run1',groups:[{id:'g',status:'failed'}],blocked_ids:[]}]};
+      if(req.operation==='translation_autopilot')return {run_id:'run1',done:false,aborted:true,abort_reason:'API HTTP 401',parked:[]};
+      if(req.operation==='translation_auto_shorten' || req.operation==='translation_draft_mapping')throw Error('must not proceed after authentication failure');
+      return {};
+    };
+    const authFailure=volumeCtx.runVolume({folder:{getFiles:()=>files},project:'/out/project.json',profile:{},output:{fsName:'/out'},note(){},streamLimit:2,openReport:false});
+    assert.strictEqual(authFailure.aborted,true);
+    assert.strictEqual(authFailure.abortReason,'API HTTP 401');
+    assert.strictEqual(written['/out/draft_run1.json'].remaining_groups[0],'g','failed group remains in checkpoint for resume');
+    volumeCtx.build=originalBuild;
     volumeCtx.rpc=req=>{
       if(req.operation==='translation_load')return {pages:[],runs:[{id:'run1',groups:[],blocked_ids:[]}]};
       if(req.operation==='translation_autopilot')return {run_id:'run1',done:true,parked:[]};

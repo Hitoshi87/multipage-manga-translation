@@ -1,0 +1,41 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const data={}, folders={};
+function File(p){this.fsName=p;this.name=p.split('/').pop();this.parent={fsName:p.slice(0,p.lastIndexOf('/'))};this.exists=Object.prototype.hasOwnProperty.call(data,p);}
+function Folder(p){this.fsName=p;this.exists=Object.prototype.hasOwnProperty.call(folders,p);this.getFiles=fn=>(folders[p]||[]).filter(fn);}
+const ctx={File,Folder,MJSON:JSON,root:{fsName:'/app'},rpc:()=>({streaming:true,pages:[{ordinal:1,page_id:'001.jpeg'},{ordinal:2,page_id:'002.jpeg'}]})};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync('scripts/core.jsxinc','utf8'),ctx);
+ctx.MTA.read=f=>data[f.fsName];
+const source=fs.readFileSync('Photoshop_Typeset.jsx','utf8');
+vm.runInContext(source.slice(source.indexOf('        function recoverSupervisedProject('),source.indexOf('        function syncEasyFolder(')),ctx);
+function image(name,length=10,time=100){let f=new File('/in/'+name);f.length=length;f.modified=new Date(time);return f;}
+const old=[image('001.jpeg'),image('002.jpeg'),image('_00.jpeg',20,200)],current=[old[0],old[1],image('vol 23.jpeg',20,200)];
+const oldKey=ctx.MTA.sourceProjectKey('/in',old),newKey=ctx.MTA.sourceProjectKey('/in',current);
+assert.strictEqual(ctx.MTA.sourceRenameCandidate('/in',current,'_00.jpeg',oldKey),'vol 23.jpeg');
+assert.strictEqual(ctx.MTA.sourceRenameCandidate('/in',[old[0],old[1],image('000.jpeg',20,200)],'_00.jpeg',oldKey),null,'renaming that changes page order is unsafe');
+assert.strictEqual(ctx.MTA.sourceRenameCandidate('/in',[old[0],old[1],image('vol 23.jpeg',21,200)],'_00.jpeg',oldKey),null,'changed metadata is not accepted');
+assert.strictEqual(ctx.MTA.sourceRenameCandidate('/in',current,'../_00.jpeg',oldKey),null,'candidate name cannot escape the input folder');
+assert.strictEqual(ctx.MTA.sourceRenameCandidate('/in',old,'_00.jpeg',oldKey),null,'an unchanged original name is not a rename');
+const project='/out/project_'+oldKey+'.json';data[project]='{}';data['/app/work/supervised/job1/job.json']=JSON.stringify({folder:'/in',output:'/out',project,sourceKey:oldKey,heavyPages:['_00.jpeg']});folders['/app/work/supervised']=[new Folder('/app/work/supervised/job1')];
+let recovered=ctx.recoverSupervisedProject({fsName:'/in'},{fsName:'/out'},current,newKey);
+assert.strictEqual(recovered.project.fsName,project);assert.strictEqual(recovered.rename.to,'vol 23.jpeg');
+ctx.rpc=()=>({streaming:true,pages:[{ordinal:1,page_id:'001.jpeg'},{ordinal:2,page_id:'002.jpeg'},{ordinal:3,page_id:'_00.jpeg'}]});
+assert.throws(()=>ctx.recoverSupervisedProject({fsName:'/in'},{fsName:'/out'},current,newKey),/không còn khớp/,'already indexed rename must not be silently rebound');
+ctx.rpc=()=>({streaming:true,pages:[{ordinal:1,page_id:'002.jpeg'}]});
+assert.throws(()=>ctx.recoverSupervisedProject({fsName:'/in'},{fsName:'/out'},current,newKey),/không còn khớp/,'changed order of indexed pages is rejected');
+ctx.rpc=()=>({streaming:true,pages:[{ordinal:1,page_id:'001.jpeg'},{ordinal:2,page_id:'002.jpeg'}]});
+data['/app/work/supervised/job2/job.json']=JSON.stringify({folder:'/in',output:'/out',project,sourceKey:newKey,heavyPages:[]});folders['/app/work/supervised'].push(new Folder('/app/work/supervised/job2'));
+recovered=ctx.recoverSupervisedProject({fsName:'/in'},{fsName:'/out'},current,newKey);assert.strictEqual(recovered.project.fsName,project,'future runs recover the bound project');
+delete data['/app/work/supervised/job2/job.json'];folders['/app/work/supervised'].pop();
+folders['/in']=current;const inFolder=new Folder('/in');
+ctx.MTA.writeCheckpoint=(file,text)=>{data[file.fsName]=text;};
+let job={folder:'/in',output:'/out',project,sourceKey:oldKey,heavyPages:['_00.jpeg']};
+let update=ctx.reconcileSupervisedSource(job,'/app/work/supervised/job1/job.json',inFolder,{fsName:'/out'});
+assert.strictEqual(update.sourceKey,newKey,'active run adopts verified current fingerprint');
+assert.deepStrictEqual(Array.from(update.heavyPages),['vol 23.jpeg'],'renamed large page remains isolated');
+assert.strictEqual(JSON.parse(data['/app/work/supervised/job1/job.json']).project,project,'updated durable job preserves the project');
+assert.strictEqual(JSON.parse(data['/app/work/supervised/job1/job.json']).sourceKey,newKey,'new fingerprint survives Photoshop restarts');
+assert.strictEqual(ctx.reconcileSupervisedSource(job,'/app/work/supervised/job1/job.json',inFolder,{fsName:'/out'}).sourceKey,newKey);
+job={folder:'/in',output:'/out',project,sourceKey:oldKey,heavyPages:['_00.jpeg']};
+folders['/in']=[old[0],old[1],image('vol 23.jpeg',21,200)];
+assert.throws(()=>ctx.reconcileSupervisedSource(job,'/app/work/supervised/job1/job.json',inFolder,{fsName:'/out'}),/không còn khớp|không xác minh/,'changed image metadata stops safely');
+console.log('Resume safely recognizes an unindexed rename PASS');

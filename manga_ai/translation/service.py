@@ -99,16 +99,20 @@ def save_profile(path, profile):
     allowed = ('series_name', 'general_prompt', 'style_prompt', 'localization_policy', 'glossary',
                'base_url', 'model', 'max_tokens', 'timeout', 'retries', 'json_mode', 'thinking', 'key_env', 'group_size',
                'input_price_per_million', 'output_price_per_million', 'auto_accept',
-               'provider_kind', 'max_input_chars', 'context_segments', 'vision_mode', 'cast_prompt')
+               'provider_kind', 'max_input_chars', 'context_segments', 'vision_mode', 'cast_prompt', 'strip_honorifics')
     if any(k not in allowed for k in profile):
         raise ValueError('Trường cấu hình không hợp lệ')
+    state = load(path)
     defaults = {'series_name':'', 'general_prompt':'', 'style_prompt':'Tự nhiên, sát nghĩa.',
                 'localization_policy':'Việt hóa kính ngữ theo ngữ cảnh.', 'glossary':'',
                 'base_url':'https://api.vilao.ai/v1', 'model':'deepseek-ai/deepseek-v4.1-flash-1017',
                 'max_tokens':4096, 'timeout':90, 'retries':1, 'json_mode':False,
                 'thinking':'default', 'key_env':'MANGA_TRANSLATION_API_KEY', 'group_size':20,
                 'input_price_per_million':None, 'output_price_per_million':None, 'auto_accept':False,
-                'provider_kind':'openai_compatible', 'max_input_chars':24000, 'context_segments':2, 'vision_mode':'off', 'cast_prompt':''}
+                'provider_kind':'openai_compatible', 'max_input_chars':24000, 'context_segments':6, 'vision_mode':'off', 'cast_prompt':'', 'strip_honorifics':True}
+    # Loading a frozen legacy profile must not silently change its revision.
+    if state['profiles'] and 'strip_honorifics' not in state['profiles'][-1]['values'] and 'strip_honorifics' not in profile:
+        defaults.pop('strip_honorifics')
     defaults.update(profile)
     compose(defaults)
     from .providers import PROVIDERS
@@ -125,6 +129,8 @@ def save_profile(path, profile):
         raise ValueError('Capability API không hợp lệ')
     if type(defaults['auto_accept']) is not bool:
         raise ValueError('Cấu hình tự chấp nhận không hợp lệ')
+    if 'strip_honorifics' in defaults and type(defaults['strip_honorifics']) is not bool:
+        raise ValueError('Cấu hình kính ngữ không hợp lệ')
     for field in ('input_price_per_million', 'output_price_per_million'):
         value=defaults[field]
         if value is not None and (type(value) not in (int,float) or not 0 <= value <= 100000):
@@ -132,7 +138,6 @@ def save_profile(path, profile):
     url = urlsplit(defaults['base_url'])
     if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise ValueError('Base URL phải là HTTPS không chứa credential hoặc query')
-    state = load(path)
     rev = digest(defaults)
     if not state['profiles'] or state['profiles'][-1]['revision'] != rev:
         state['profiles'].append({'revision':rev, 'created_at':now(), 'values':defaults})
@@ -444,6 +449,7 @@ def prepare(path):
                         context_segments=int(settings.get('context_segments',2)),max_input_chars=int(settings.get('max_input_chars',24000)),
                         max_pages=4 if settings.get('vision_mode','off')!='off' else None)
     run = {'id':'run_'+uuid.uuid4().hex, 'profile_revision':profile['revision'], 'created_at':now(),
+           'translation_quality_version':2,
            'compiled_system':system, 'compiled_system_revision':digest(system), 'grouping_version':'quote_links_v1',
            'groups':groups, 'blocked_ids':[s['id'] for s in segments if not s['jp'] and s.get('source_status') != 'excluded']}
     state['runs'].append(run); save(path,state)
@@ -469,6 +475,7 @@ def prepare_stream(path, max_page_ordinal):
     if not run or not run.get('streaming'):
         system=compose(settings)
         run={'id':'run_'+uuid.uuid4().hex,'profile_revision':profile['revision'],'created_at':now(),
+             'translation_quality_version':2,
              'compiled_system':system,'compiled_system_revision':digest(system),'grouping_version':'quote_links_v1',
              'streaming':True,'groups':[],'blocked_ids':[],'max_page_ordinal':0}
         state['runs'].append(run)
@@ -557,10 +564,34 @@ def run_group(path, run_id, group_id, cancel=None):
         trial_payload={**payload,'prior_readings':readings}
         if len(run['compiled_system'])+len(json.dumps(trial_payload,ensure_ascii=False))<=int(profile.get('max_input_chars',24000)):
             payload=trial_payload
+    if run.get('translation_quality_version', 0) >= 2:
+        from .dialogue import prior_translations
+        # Add the most recent aligned pairs first, within the existing input budget.
+        selected=[]
+        for item in reversed(prior_translations(run, group)):
+            trial={**payload, 'prior_translations':[item]+selected}
+            if len(run['compiled_system'])+len(json.dumps(trial,ensure_ascii=False))<=int(profile.get('max_input_chars',24000)):
+                selected=[item]+selected
+        if selected:payload['prior_translations']=selected
     meta = None
+    raw = None
     try:
         raw, meta = call_provider(call_profile, run['compiled_system'], payload)
         rows = validate_response(raw,group['targets'])
+        meta=dict(meta or {})
+        if payload.get('prior_translations'):
+            meta['context_translation_ids']=[t['id'] for t in payload['prior_translations']]
+        if run.get('translation_quality_version', 0) >= 2 and profile.get('strip_honorifics', True):
+            from .dialogue import strip_honorifics
+            from .qa import qa_warnings
+            for target,row in zip(group['targets'],rows):
+                clean,removed=strip_honorifics(row['vi'])
+                if removed:
+                    row['_provider_translation']=row['vi'];row['vi']=clean
+                    row['_text_adjustments']=[{'kind':'honorific_removed','count':removed}]
+                    warnings=qa_warnings(target['jp'],clean)
+                    if warnings:row['_qa_warnings']=warnings
+                    else:row.pop('_qa_warnings',None)
         _quote_consistency(rows,group.get('quote_links',[]))
         def content(text):return ''.join(c for c in unicodedata.normalize('NFKC',text) if c.isalnum())
         for target,row in zip(group['targets'],rows):
@@ -603,6 +634,7 @@ def run_group(path, run_id, group_id, cancel=None):
         group=next(g for g in run['groups'] if g['id']==group_id)
         if group['status']=='completed': return envelope('translation','completed',group,job_id=run_id)
         group['results']=[{'id':r['id'],'semantic_translation':r['vi'],'flags':r['flags'],
+                           **({'provider_translation':r['_provider_translation'],'text_adjustments':r['_text_adjustments']} if '_provider_translation' in r else {}),
                            **({'source_evidence':{**r['source_evidence'],'status':'proposed','origin':'vision_model','source_id':r['id']}} if mode!='off' and 'source_evidence' in r else {}),
                            **({'source_evidence_error':r['_source_evidence_error']} if r.get('_source_evidence_error') else {}),
                            **({'qa_warnings':r['_qa_warnings']} if r.get('_qa_warnings') else {}),
@@ -623,6 +655,10 @@ def run_group(path, run_id, group_id, cancel=None):
         target=next(g for r in latest['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id)
         if target['status']!='completed':
             failure_meta = getattr(exc, 'metadata', None) or meta or {}
+            if str(exc) == 'Invalid translation JSON' and isinstance(raw, str):
+                # Keep bounded evidence of a malformed provider response so a
+                # resumed run can be diagnosed without repeating paid requests.
+                failure_meta = {**failure_meta, 'response_excerpt': raw[:1000]}
             target['status']='failed';target['attempts'].append({'at':now(),'status':'failed','error':str(exc)[:300],
                 'output_valid':False, **failure_meta});save(path,latest)
         raise

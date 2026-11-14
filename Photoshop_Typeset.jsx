@@ -1,7 +1,8 @@
 #target photoshop
 #include "scripts/json.jsxinc"
 #include "scripts/core.jsxinc"
-/* Manga Typesetter — UI 1107-ui.4. File > Scripts > Browse. UTF-8. */
+#include "scripts/repair.jsxinc"
+/* Manga Typesetter — UI 1107-ui.5. File > Scripts > Browse. UTF-8. */
 (function () {
     var root = new File($.fileName).parent;
     var supervisedPath=$.global.MTA_SUPERVISED_JOB || null, supervisedResult=$.global.MTA_SUPERVISED_RESULT || null;
@@ -109,9 +110,10 @@
         maxSize.helpTip=minSize.helpTip;
         fontRow.add('statictext', undefined, 'Giãn dòng:');
         var leadingAuto = fontRow.add('checkbox', undefined, 'Tự động (Auto)'); leadingAuto.value = true;
-        leadingAuto.helpTip = 'Dùng Auto leading của Photoshop để khoảng cách dòng đi theo cỡ chữ khi bạn chỉnh về sau. Bỏ tick để nhập số.';
-        var leading = fontRow.add('edittext', undefined, '1.05'); leading.characters = 4;
-        leading.helpTip = 'Chỉ dùng khi bỏ tick Tự động.';
+        leadingAuto.helpTip = 'Tính giãn dòng theo chiều cao dấu tiếng Việt của font; Auto leading đi theo cỡ chữ khi bạn chỉnh về sau. Bỏ tick để nhập số.';
+        var leading = fontRow.add('edittext', undefined, '1.30'); leading.characters = 4;
+        leading.helpTip = 'Chỉ dùng khi bỏ tick Tự động. Tool giữ khoảng hở tối thiểu giữa các dòng để dấu tiếng Việt không chạm nhau.';
+        typesetTab.add('statictext',undefined,'Thoại mặc định: khung chữ ngang, chỉnh bằng Horizontal Type Tool (T).');
         var roleFontRow = typesetTab.add('group');
         roleFontRow.add('statictext', undefined, 'Font ô vuông:');
         var boxFont = roleFontRow.add('dropdownlist', undefined, fontNames); boxFont.preferredSize.width = 200; boxFont.selection = font.selection.index;
@@ -149,6 +151,10 @@
         savePdf.helpTip = 'PDF nén JPEG, không giữ layer — dung lượng gần lưu tay. Cần chỉnh sửa lại thì dùng PSD.';
         var pdfLayers = formatRow.add('checkbox', undefined, 'PDF giữ layer (rất nặng)');
         pdfLayers.helpTip = 'Nhúng toàn bộ PSD vào PDF nên file có thể lớn gấp nhiều lần. Chỉ bật khi thật sự cần.';
+        var repairExisting=typesetTab.add('button',undefined,'Sửa hàng loạt PDF/PSD cũ: khung thoại + giãn dòng');
+        repairExisting.helpTip='Chọn thư mục kết quả có draft_*.json. Dùng layer chữ và bản dịch sẵn có; lưu bản sửa trong SUA_THOAI. Có thể chạy lại để tiếp tục.';
+        var renameNames=typesetTab.add('button',undefined,'Đổi tên nhân vật hàng loạt (tối đa 3 tên)');
+        renameNames.helpTip='Đặt tối đa 3 cặp tên cũ → tên mới; đổi trong layer thoại PDF/PSD, không gọi API dịch lại.';
         var colorRow = typesetTab.add('group'); colorRow.add('statictext', undefined, 'Màu xuất PSD/PDF/JPG:');
         var colorChoices = ['Giữ nguyên như ảnh gốc (khuyên dùng)', 'RGB', 'CMYK (theo Color Settings, nặng hơn khoảng 33%)'];
         var colorMode = colorRow.add('dropdownlist', undefined, colorChoices); colorMode.selection = 0; colorMode.preferredSize.width = 340;
@@ -177,7 +183,52 @@
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
         var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, leadingAuto,
-                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
+                        minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, repairExisting, renameNames, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
+        repairExisting.onClick=function(){var folder=Folder.selectDialog('Chọn thư mục PDF/PSD đã xuất, có checkpoint draft_*.json');if(!folder)return;
+            run(function(){var result=MTARepair.runFolder(folder,tick),done=0,failed=0;
+                for(var i=0;i<result.log.pages.length;i++)if(result.log.pages[i].status==='complete')done++;else failed++;
+                alert((result.log.cancelled?'Đã dừng tại checkpoint. ':'')+'Đã sửa '+done+' file; cần xem lại '+failed+' file.\nKết quả: '+result.folder.fsName+'\nChi tiết: repair_log.json. Chạy lại cùng thư mục để tiếp tục.');});};
+        function chooseNameRules(){
+            var settings=new File(Folder.userData.fsName+'/MangaTypesetterLite/name_replacements.json'),
+                saved=[{from:'Ajisawa',to:'Shinjuku',dropAfter:'Takumi'}],stripSaved=true,allSaved=true;
+            try{if(settings.exists){var stored=MJSON.parse(MTA.read(settings));
+                saved=MTARepair.nameRules(stored.names||stored);if(stored.names)stripSaved=stored.stripHonorifics===true;
+                if(stored.names && stored.allNames!==undefined)allSaved=stored.allNames===true;
+            }}catch(_){}
+            var dialog=new Window('dialog','Đổi tên nhân vật — tối đa 3 tên');dialog.orientation='column';dialog.alignChildren='fill';
+            dialog.add('statictext',undefined,'Tên cũ → tên mới. Không phân biệt hoa/thường; chỉ thay trọn tên.');
+            var inputs=[],result=null;
+            for(var i=0;i<3;i++){
+                var line=dialog.add('group');line.add('statictext',undefined,String(i+1)+'.');
+                var from=line.add('edittext',undefined,saved[i]?saved[i].from:'');from.characters=18;
+                line.add('statictext',undefined,'→');
+                var to=line.add('edittext',undefined,saved[i]?saved[i].to:'');to.characters=18;
+                line.add('statictext',undefined,'Bỏ phần sau:');
+                var drop=line.add('edittext',undefined,saved[i]?(saved[i].dropAfter||''):'');drop.characters=12;
+                inputs.push({from:from,to:to,dropAfter:drop});
+            }
+            var strip=dialog.add('checkbox',undefined,'Bỏ kính ngữ có gạch nối: -san, -kun, -chan, -sama, -senpai, -sensei, -dono');strip.value=stripSaved;
+            var allNames=dialog.add('checkbox',undefined,'Áp dụng bỏ kính ngữ cho MỌI tên, kể cả tên không nằm trong 3 cặp');allNames.value=allSaved;
+            dialog.add('statictext',undefined,'Ví dụ: Bỏ phần sau = Takumi → Shinjuku Takumi-san thành Shinjuku.');
+            dialog.add('statictext',undefined,'Muốn chỉ rút tên đã đúng: nhập Shinjuku → Shinjuku, Bỏ phần sau = Takumi.');
+            dialog.add('statictext',undefined,'Giữ kiểu HOA/thường; bản kết quả nằm trong thư mục DOI_TEN.');
+            var buttons=dialog.add('group');buttons.alignment='right';
+            buttons.add('button',undefined,'Hủy',{name:'cancel'});
+            var start=buttons.add('button',undefined,'Chọn thư mục và đổi tên',{name:'ok'});
+            start.onClick=function(){try{
+                var rows=[];for(var n=0;n<inputs.length;n++)rows.push({from:inputs[n].from.text,to:inputs[n].to.text,dropAfter:inputs[n].dropAfter.text});
+                var rules=MTARepair.nameRules(rows);if(!rules.length && !(strip.value && allNames.value))throw Error('Hãy nhập một cặp tên hoặc bật bỏ kính ngữ cho mọi tên.');
+                result={names:rules,stripHonorifics:strip.value===true,allNames:allNames.value===true};
+                MTA.mkdir(settings.parent.fsName);MTA.write(settings,MJSON.stringify(result));dialog.close(1);
+            }catch(e){alert(String(e.message||e));}};
+            return dialog.show()===1?result:null;
+        }
+        renameNames.onClick=function(){var selection=chooseNameRules();if(!selection)return;
+            var rules=selection.names||selection;
+            var folder=Folder.selectDialog('Chọn thư mục PDF/PSD: PDF 2 hoặc thư mục SUA_THOAI đã sửa');if(!folder)return;
+            run(function(){var result=MTARepair.runFolder(folder,tick,{names:rules,stripHonorifics:selection.stripHonorifics===true,allNames:selection.allNames===true}),done=0,failed=0,count=0,honorifics=0,trimmed=0;
+                for(var i=0;i<result.log.pages.length;i++){var page=result.log.pages[i];if(page.status==='complete')done++;else failed++;count+=page.replacements||0;honorifics+=page.honorifics||0;trimmed+=page.trimmed||0;}
+                alert((result.log.cancelled?'Đã dừng tại checkpoint. ':'')+'Đã xử lý '+done+' file; đổi '+count+' lượt tên; bỏ '+honorifics+' kính ngữ; rút '+trimmed+' phần tên; cần xem lại '+failed+' file.\nKết quả: '+result.folder.fsName+'\nChi tiết: rename_log.json. Chạy lại cùng thiết lập để tiếp tục.');});};
         var activeTaskDialog=null, volumeProgress='';
         function tick(message, fraction) {
             if(supervisedJob && (new File(supervisedJob.cancel)).exists)cancelled=true;
@@ -275,7 +326,7 @@
             return docs[page.selection.index];
         }
         function options(doc) {
-            var result = {font: fontIds[font.selection.index], fonts: {dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index]}, automatic: autoRoles.value, uppercase: uppercaseText.value, autoSize: autoSize.value, min: Number(minSize.text), max: Number(maxSize.text), autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.05 : Number(leading.text)};
+            var result = {font: fontIds[font.selection.index], fonts: {dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index]}, automatic: autoRoles.value, uppercase: uppercaseText.value, autoSize: autoSize.value, min: Number(minSize.text), max: Number(maxSize.text), autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.30 : Number(leading.text)};
             if (!(result.min >= 4 && result.max >= result.min && result.max <= 250 && result.leading >= 1 && result.leading <= 2.5))
                 throw Error('Cỡ chuẩn cần 4–250, min ≤ max; giãn dòng cần 1–2.5.');
             if(doc){
@@ -756,7 +807,7 @@
                     var ix=order[ox];volumeProgress=cfg.label+'Trang '+(ox+1)+'/'+order.length;if(!tick('Nhận diện và đọc chữ',5+10*ox/order.length))throw Error('Đã hủy');var doc=null,own=false;
                     try{doc=srcFolder?app.open(sources[ix]):sources[ix];own=!!srcFolder;var existing=null,data=loadProject();
                         for(var pi=0;pi<data.pages.length;pi++)if(data.pages[pi].page_id===decodeURI(doc.name))existing=data.pages[pi];
-                        if(existing){if(existing.ordinal!==ix+1)throw Error('Thứ tự trang đã đổi; hãy tạo project mới hoặc index lại.');var tmp=MTA.mkdir(root.fsName+'/work/pages/'+MTA.unique());var snap=MTA.snapshot(doc,tmp);rpc({operation:'translation_verify_page',manifest:existing.manifest,snapshot:snap.fsName});
+                        if(existing){if(existing.ordinal!==ix+1)throw Error('Thứ tự trang đã đổi; hãy tạo project mới hoặc index lại.');var tmp=MTA.mkdir(root.fsName+'/work/pages/'+MTA.unique());var snap=MTA.snapshot(doc,tmp);rpc({operation:'translation_verify_page',manifest:existing.manifest,snapshot:snap.fsName});try{snap.remove();tmp.remove();}catch(_){}
                             var oldManifest=MJSON.parse(MTA.read(new File(existing.manifest))),wantedLayout=magiOrder.value?'magi':(koharuOrder.value?'koharu':'opencv');
                             var oldLayout=oldManifest.layout_model||'opencv';
                             if(canRefreshPageLayout(data,existing,oldLayout,wantedLayout)){
@@ -808,7 +859,21 @@
                     if(report.auto_excluded)autoExcluded=report.auto_excluded.count;
                 }while(!report.done && !report.aborted);
                 for(var pk=0;pk<report.parked.length;pk++)addFailure({group_id:report.parked[pk].group_id,error:report.parked[pk].error});
-                if(report.aborted)addFailure({stage:'autopilot',error:report.abort_reason});
+                if(report.aborted){
+                    addFailure({stage:'autopilot',error:report.abort_reason});
+                    // Do not produce misleading PDFs with missing translations
+                    // when authentication or another systemic error stops the run.
+                    var abortedLog=new File(outputFolder.fsName+'/draft_'+run.id+'.json');
+                    var abortedRun=latestRun(loadProject()),abortedRemaining=[];
+                    for(var ag=0;ag<abortedRun.groups.length;ag++)if(abortedRun.groups[ag].status!=='completed')abortedRemaining.push(abortedRun.groups[ag].id);
+                    MTA.writeCheckpoint(abortedLog,MJSON.stringify({run_id:run.id,project:project,auto_excluded:autoExcluded,
+                        blocked_source_ids:abortedRun.blocked_ids,remaining_groups:abortedRemaining,translation_failures:failed,pages:log}));
+                    return {log:log,logFile:abortedLog,failed:failed,scanFailures:scanFailures,
+                            engine:chosen,autoExcluded:autoExcluded,aborted:true,abortReason:report.abort_reason};
+                }
+                // Clear stale systemic failures after the provider has recovered.
+                for(var oldFailure=failed.length-1;oldFailure>=0;oldFailure--)
+                    if(failed[oldFailure].stage==='autopilot')failed.splice(oldFailure,1);
                 // Tighten only the lines that would be lettered cramped (non-fatal if it cannot run).
                 try{
                     var shortened=0,sr=null;
@@ -919,8 +984,12 @@
             }
             var count=0,size=(cfg.batchSize===1 || cfg.batchSize===2 || cfg.batchSize===4)?cfg.batchSize:4,batches=0;
             for(var start=cfg.startIndex||0;start<files.length;){
-                if(cfg.sourceKey && MTA.sourceProjectKey(cfg.folder.fsName,cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==cfg.sourceKey)
-                    throw Error('Ảnh đầu vào đã thay đổi trong khi chạy; dừng để tránh ghép nhầm. Các PDF đã xuất vẫn được giữ.');
+                if(cfg.sourceKey && MTA.sourceProjectKey(cfg.folder.fsName,cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==cfg.sourceKey){
+                    if(!cfg.reconcileSource)throw Error('Ảnh đầu vào đã thay đổi trong khi chạy; dừng để tránh ghép nhầm. Các PDF đã xuất vẫn được giữ.');
+                    var updated=cfg.reconcileSource();cfg.sourceKey=updated.sourceKey;cfg.heavyPages=updated.heavyPages;
+                    files=cfg.folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);});
+                    files.sort(function(a,b){var aa=decodeURI(a.name).match(/\d+|\D+/g),bb=decodeURI(b.name).match(/\d+|\D+/g);for(var z=0;z<Math.min(aa.length,bb.length);z++){var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase(),bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();if(av<bv)return -1;if(av>bv)return 1;}return aa.length-bb.length;});
+                }
                 var end=memoryBatchEnd(files,start,size,cfg.heavyPages),indices=[];
                 for(var i=start;i<end;i++){
                     var name=decodeURI(files[i].name),done=false;
@@ -933,7 +1002,11 @@
                 part.indices=indices;part.streamLimit=end;part.sharedLog=shared;part.sharedFailures=sharedFailures;part.openReport=false;
                 part.label='[Nhóm '+(start+1)+'–'+end+'/'+files.length+'] ';
                 last=runVolume(part);shared=last.log;sharedFailures=last.failed;count+=indices.length;
-                if(last.aborted)throw Error('Đã dừng dịch: '+last.abortReason+'. Các trang đã xuất vẫn được giữ; chạy lại để tiếp tục.');
+                if(last.aborted){
+                    var authHint=/API HTTP (401|403)|Chưa có API key/.test(String(last.abortReason))?
+                        ' Hãy kiểm tra API key/quyền truy cập với nhà cung cấp; nhập key mới vào ô API key trong script rồi chạy lại cùng thư mục kết quả.': '';
+                    throw Error('Đã dừng dịch: '+last.abortReason+'. Các trang đã xuất vẫn được giữ; chạy lại để tiếp tục.'+authHint);
+                }
                 if(last.memoryYield){last.recycle=true;return last;}
                 batches++;
                 if(cfg.maxBatches && batches>=cfg.maxBatches && end<files.length){last.recycle=true;last.nextStart=end;return last;}
@@ -1136,6 +1209,7 @@
             var style=field('Văn phong tiếng Việt',prior.style_prompt || 'Tự nhiên, sát nghĩa.',true);
             var localization=field('Quy tắc Việt hóa',prior.localization_policy,true);
             var glossary=field('Glossary / nhân vật',prior.glossary,true);
+            var stripJapaneseSuffixes=dlg.add('checkbox',undefined,'Tự bỏ hậu tố Nhật -san/-kun/-chan… trong bản dịch mới');stripJapaneseSuffixes.value=prior.strip_honorifics!==false;
             var url=field('API base URL',prior.base_url || 'https://api.vilao.ai/v1',false);
             var model=field('Model ID',prior.model || 'deepseek-ai/deepseek-v4.1-flash-1017',false);
             var opts=dlg.add('group');opts.add('statictext',undefined,'Biến API key:');
@@ -1143,7 +1217,7 @@
             opts.add('statictext',undefined,'Tokens:');var tokens=opts.add('edittext',undefined,String(prior.max_tokens || 4096));tokens.characters=6;
             opts.add('statictext',undefined,'Nhóm:');var groupSize=opts.add('edittext',undefined,String(prior.group_size || 20));groupSize.characters=4;
             opts.add('statictext',undefined,'Ký tự đầu vào:');var inputLimit=opts.add('edittext',undefined,String(prior.max_input_chars || 24000));inputLimit.characters=6;
-            opts.add('statictext',undefined,'Câu trước:');var contextLimit=opts.add('edittext',undefined,String(prior.context_segments===undefined?2:prior.context_segments));contextLimit.characters=3;
+            opts.add('statictext',undefined,'Câu trước:');var contextLimit=opts.add('edittext',undefined,String(prior.context_segments===undefined?6:prior.context_segments));contextLimit.characters=3;
             var pricing=dlg.add('group');pricing.add('statictext',undefined,'Timeout (giây):');var timeout=pricing.add('edittext',undefined,String(prior.timeout || 90));timeout.characters=4;
             pricing.add('statictext',undefined,'Retry:');var retries=pricing.add('edittext',undefined,String(prior.retries===undefined?1:prior.retries));retries.characters=3;
             pricing.add('statictext',undefined,'Giá / triệu token vào:');var priceIn=pricing.add('edittext',undefined,prior.input_price_per_million===null || prior.input_price_per_million===undefined?'':String(prior.input_price_per_million));priceIn.characters=6;
@@ -1165,7 +1239,7 @@
             var stopVolume=dlg.add('button',undefined,'Dừng tại điểm an toàn');stopVolume.enabled=false;
             action.add('button',undefined,'Đóng',{name:'cancel'});
             var note=dlg.add('statictext',undefined,'',{multiline:true});note.preferredSize=[700,44];
-            function profile(){return {series_name:series.text,general_prompt:general.text,style_prompt:style.text,localization_policy:localization.text,glossary:glossary.text,base_url:url.text,model:model.text,key_env:keyEnv.text,max_tokens:Number(tokens.text),group_size:Number(groupSize.text),max_input_chars:Number(inputLimit.text),context_segments:Number(contextLimit.text),timeout:Number(timeout.text),retries:Number(retries.text),input_price_per_million:priceIn.text?Number(priceIn.text):null,output_price_per_million:priceOut.text?Number(priceOut.text):null,json_mode:jsonMode.value,thinking:thinking.selection.text,vision_mode:vision.selection.text,auto_accept:autoAccept.value};}
+            function profile(){return {series_name:series.text,general_prompt:general.text,style_prompt:style.text,localization_policy:localization.text,glossary:glossary.text,base_url:url.text,model:model.text,key_env:keyEnv.text,max_tokens:Number(tokens.text),group_size:Number(groupSize.text),max_input_chars:Number(inputLimit.text),context_segments:Number(contextLimit.text),timeout:Number(timeout.text),retries:Number(retries.text),input_price_per_million:priceIn.text?Number(priceIn.text):null,output_price_per_million:priceOut.text?Number(priceOut.text):null,json_mode:jsonMode.value,thinking:thinking.selection.text,vision_mode:vision.selection.text,auto_accept:autoAccept.value,strip_honorifics:stripJapaneseSuffixes.value===true};}
             function loadProject(){return rpc({operation:'translation_load',project:project});}
             function latestRun(data){if(!data.runs.length)throw Error('Chưa có lượt dịch');return data.runs[data.runs.length-1];}
             var volumeRunning=false;
@@ -1636,7 +1710,7 @@
         function easyRefreshKey(){
             try{
                 var k=rpc({operation:'translation_key_status',key_env:EASY_KEY_ENV});
-                easyKeyInfo.text=k.present?'Đã có API key ('+(k.source==='env'?'từ biến môi trường':'đã lưu trên máy này')+'). Để trống ô API key nếu không muốn đổi.':'CHƯA CÓ API key: hãy dán key vào ô API key.';
+                easyKeyInfo.text=k.present?(k.source==='env'?'Đang dùng API key từ biến môi trường; key này ưu tiên hơn key nhập ở đây.':'Đã có API key lưu trên máy này. Để trống ô API key nếu không muốn đổi.'):'CHƯA CÓ API key: hãy dán key vào ô API key.';
             }catch(e){easyKeyInfo.text='Không kiểm tra được API key.';}
         }
         // Host and model are remembered (not secret); the key goes only to the per-user key file.
@@ -1717,7 +1791,7 @@
             try{st=rpc({operation:'translation_load',project:project});if(st.profiles.length)prior=st.profiles[st.profiles.length-1].values;}catch(profileError){if(profileError.workerUnresponsive)throw profileError;}
             var p={};for(k in prior)p[k]=prior[k];
             p.series_name=easyName.text;p.base_url=easyHost.text;p.model=easyModelName.text;
-            p.group_size=7;p.max_tokens=24576;p.timeout=150;p.retries=1;p.json_mode=true;p.thinking='disabled';p.context_segments=2;
+            p.group_size=7;p.max_tokens=24576;p.timeout=150;p.retries=1;p.json_mode=true;p.thinking='disabled';p.context_segments=prior.context_segments===undefined?6:prior.context_segments;
             p.vision_mode=mode===1?'target_crop':'off';p.key_env=p.key_env||EASY_KEY_ENV;p.auto_accept=false;
             return p;
         }
@@ -1737,6 +1811,61 @@
                 for(i=pages.length-1;i>=0;i--)if(pages[i].status==='draft' && pages[i].engine){engine=pages[i].engine;break;}
             }
             return {profile:profile,engine:engine};
+        }
+        // Reuse a project tied to this folder/output when a prior supervised
+        // job proves the current fingerprint, or one unindexed large page was
+        // renamed without changing any source metadata or page ordering.
+        function recoverSupervisedProject(sourceFolder,out,files,currentKey){
+            var direct=new File(out.fsName+'/project_'+currentKey+'.json');
+            if(direct.exists)return {project:direct,rename:null};
+            var runs=new Folder(root.fsName+'/work/supervised');if(!runs.exists)return {project:direct,rename:null};
+            var dirs=runs.getFiles(function(f){return f instanceof Folder;}),matches={},count=0,result=null,related=false;
+            var ordered=files.slice(0);ordered.sort(function(a,b){var aa=decodeURI(a.name).match(/\d+|\D+/g),bb=decodeURI(b.name).match(/\d+|\D+/g);for(var z=0;z<Math.min(aa.length,bb.length);z++){var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase(),bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();if(av<bv)return -1;if(av>bv)return 1;}return aa.length-bb.length;});
+            for(var i=0;i<dirs.length;i++){
+                var jobFile=new File(dirs[i].fsName+'/job.json'),job;
+                if(!jobFile.exists)continue;
+                try{job=MJSON.parse(MTA.read(jobFile));}catch(_){continue;}
+                if(job.folder!==sourceFolder.fsName || job.output!==out.fsName || !job.sourceKey || !job.project)continue;
+                var project=new File(job.project);
+                if(!project.exists || project.parent.fsName!==out.fsName || !/^project_[0-9a-f]{16}\.json$/i.test(project.name) || matches[project.fsName])continue;
+                related=true;
+                var rename=null,oldName=null,heavy=job.heavyPages||[];
+                if(job.sourceKey!==currentKey){
+                    for(var h=0;h<heavy.length;h++){
+                        var found=MTA.sourceRenameCandidate(sourceFolder.fsName,files,heavy[h],job.sourceKey);
+                        if(found){if(rename){rename=null;oldName=null;break;}rename=found;oldName=heavy[h];}
+                    }
+                    if(!rename)continue;
+                }
+                var data;
+                try{data=rpc({operation:'translation_resume_inventory',project:project.fsName});}catch(loadError){if(loadError.workerUnresponsive)throw loadError;continue;}
+                if(!data.streaming)continue;
+                var valid=true;
+                for(var p=0;p<data.pages.length;p++){
+                    var page=data.pages[p],ordinal=page.ordinal;
+                    if(ordinal<1 || ordinal>ordered.length || decodeURI(ordered[ordinal-1].name)!==page.page_id ||
+                       (rename && (page.page_id===oldName || page.page_id===rename))){valid=false;break;}
+                }
+                if(valid && !matches[project.fsName]){matches[project.fsName]=true;count++;result={project:project,rename:rename?{from:oldName,to:rename}:null};}
+            }
+            if(count>1)throw Error('Có nhiều project cũ phù hợp; hãy chọn thư mục kết quả riêng để tránh ghép nhầm.');
+            if(!count && related)throw Error('Ảnh hoặc thứ tự trang không còn khớp project trước; chưa thể tiếp tục an toàn. Khôi phục ảnh cũ hoặc chọn thư mục kết quả mới.');
+            return result||{project:direct,rename:null};
+        }
+        function reconcileSupervisedSource(job,jobPath,folder,out){
+            var files=folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);});
+            var key=MTA.sourceProjectKey(folder.fsName,files);
+            if(key===job.sourceKey)return {sourceKey:key,heavyPages:job.heavyPages||[]};
+            var found=recoverSupervisedProject(folder,out,files,key);
+            if(found.project.fsName!==job.project || !found.rename)throw Error('Ảnh đầu vào đã đổi; không xác minh được an toàn để tiếp tục. Các trang đã xuất vẫn được giữ.');
+            var heavy=(job.heavyPages||[]).slice(0);
+            for(var h=0;h<heavy.length;h++)if(heavy[h]===found.rename.from)heavy[h]=found.rename.to;
+            if(MTA.sourceProjectKey(folder.fsName,folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==key)
+                throw Error('Ảnh đầu vào tiếp tục thay đổi trong khi kiểm tra; đã dừng an toàn.');
+            job.sourceKey=key;job.heavyPages=heavy;
+            job.sourceRename={from:found.rename.from,to:found.rename.to};
+            MTA.writeCheckpoint(new File(jobPath),MJSON.stringify(job));
+            return {sourceKey:key,heavyPages:heavy};
         }
         function syncEasyFolder(f){
             if(!easyFolder || !f || easyFolder.fsName!==f.fsName){lastReportHtml=null;easyReport.enabled=false;}
@@ -1856,7 +1985,7 @@
                 }
                 if(MTA.sourceProjectKey(easyFolder.fsName,easyFiles())!==sourceKey)throw Error('Ảnh đầu vào đã đổi trong khi kiểm tra kích thước; hãy bắt đầu lại.');
                 var out=MTA.mkdir(easyOutFolder().fsName);
-                var project=new File(out.fsName+'/project_'+sourceKey+'.json');
+                var recovered=recoverSupervisedProject(easyFolder,out,inputFiles,sourceKey),project=recovered.project;
                 var resume=savedStreamingSettings(project,out),engine=null;
                 if(resume && resume.engine){
                     engine=easyEngineById(resume.engine.id);
@@ -1884,12 +2013,16 @@
                 var stopFile=new File(dir.fsName+'/Dung.command');
                 MTA.write(stopFile,'#!/bin/sh\ntouch '+MTA.shell(job.cancel)+'\n');
                 app.system('/bin/chmod 700 '+MTA.shell(stopFile.fsName));
+                var retryFile=new File(dir.fsName+'/Tiep_tuc.command');
+                MTA.write(retryFile,'#!/bin/sh\ntouch '+MTA.shell(dir.fsName+'/resume')+'\n');
+                app.system('/bin/chmod 700 '+MTA.shell(retryFile.fsName));
                 var python=new File(root.fsName+'/.venv/bin/python');if(!python.exists)throw Error('Thiếu Python trong .venv.');
                 var command='cd '+MTA.shell(root.fsName)+' && '+MTA.shell(python.fsName)+' -m manga_ai.photoshop_supervisor '+MTA.shell(jobFile.fsName)+' > '+MTA.shell(dir.fsName+'/supervisor.log')+' 2>&1 &';
                 alert('Sẽ khởi động bộ giám sát khi bạn đóng thông báo. Photoshop sẽ chạy theo từng nhóm và tự mở lại khi cần.'+
                     (resume?'\n\nTiếp tục project cũ với cấu hình đã lưu: '+profile.model+', chế độ ảnh '+profile.vision_mode+', engine '+engine.id+'.':'')+
+                    (recovered.rename?'\nNhận diện ảnh chưa xử lý đã đổi tên: '+recovered.rename.from+' → '+recovered.rename.to+'.':'')+
                     '\nTrang lớn hoặc chưa đọc được kích thước sẽ được xử lý riêng: '+heavyPages.length+'.'+
-                    '\n\nTrạng thái: '+dir.fsName+'/supervisor_status.json\nTiến độ: '+dir.fsName+'/progress.json\nĐể dừng tại điểm an toàn, mở file Dung.command trong thư mục trên.');
+                    '\n\nTrạng thái: '+dir.fsName+'/supervisor_status.json\nTiến độ: '+dir.fsName+'/progress.json\nMở Dung.command để dừng an toàn; khi API lỗi xác thực, sửa key hoặc quyền rồi mở Tiep_tuc.command để thử lại.');
                 app.system('/bin/sh -c '+MTA.shell(command));
                 supervisorStarting=dir;
                 win.close();
@@ -1918,11 +2051,12 @@
                     if(!aiDetector.value)throw Error('Thiếu model AI nhận diện.');
                     var folder=new Folder(supervisedJob.folder),out=new Folder(supervisedJob.output);
                     if(!folder.exists || !out.exists)throw Error('Thư mục ảnh hoặc kết quả không còn sẵn sàng.');
-                    if(MTA.sourceProjectKey(folder.fsName,folder.getFiles(function(f){return f instanceof File && MTA.sourceNameAllowed(f.name);}))!==supervisedJob.sourceKey)throw Error('Ảnh đầu vào đã đổi; dừng để tránh ghép nhầm.');
+                    reconcileSupervisedSource(supervisedJob,supervisedPath,folder,out);
                     busy=true;for(var ci=0;ci<controls.length;ci++)controls[ci].enabled=false;close.enabled=false;
                     var res=runStreamingVolume({project:supervisedJob.project,profile:supervisedJob.profile,title:supervisedJob.title,
                         note:easySay,engine:supervisedJob.engine,folder:folder,output:out,sourceKey:supervisedJob.sourceKey,
-                        startIndex:supervisedCursor,batchSize:supervisedBatchSize,pressureFile:supervisedPressure,heavyPages:supervisedJob.heavyPages||[],maxBatches:1,openFinalReport:false});
+                        startIndex:supervisedCursor,batchSize:supervisedBatchSize,pressureFile:supervisedPressure,heavyPages:supervisedJob.heavyPages||[],
+                        reconcileSource:function(){return reconcileSupervisedSource(supervisedJob,supervisedPath,folder,out);},maxBatches:1,openFinalReport:false});
                     response=res.recycle?{state:'recycle',next_cursor:res.nextStart}:{state:res.pendingPages.length?'needs_attention':'complete',
                         message:res.pendingPages.length?'Còn '+res.pendingPages.length+' trang chưa hoàn tất; xem báo cáo và chạy lại để tiếp tục.':'Đã chạy hết các nhóm. Xem báo cáo trong '+out.fsName,
                         pending_pages:res.pendingPages,summary:res.summary,report:res.html};

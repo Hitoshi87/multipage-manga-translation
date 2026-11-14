@@ -15,7 +15,8 @@ from . import service
 
 PERMANENT = ('Chưa có API key', 'API HTTP 4', 'Nguồn đã thay đổi', 'Nguồn hoặc profile', 'Profile đã thay đổi',
              'Đã hủy', 'Lượt cũ chưa lưu prompt', 'Payload vision vượt giới hạn', 'Không tìm thấy')
-SYSTEMIC = ('Chưa có API key', 'API HTTP 401', 'API HTTP 403', 'Đã hủy')
+SYSTEMIC = ('Chưa có API key', 'API HTTP 401', 'API HTTP 403', 'Đã hủy',
+            'API upstream temporarily unavailable', 'Upstream temporarily unavailable, please retry.')
 
 
 def classify_error(message):
@@ -29,6 +30,14 @@ def classify_error(message):
 
 
 def _failed_attempts(group):
+    # A rejected credential is a global condition, not evidence that this
+    # particular translation group has exhausted its retry budget. Keep the
+    # audit history but allow the same group to run after credentials change.
+    return sum(1 for a in group.get('attempts', []) if a.get('status') == 'failed'
+               and classify_error(a.get('error', '') + ' ' + a.get('response_excerpt', '')) != 'systemic')
+
+
+def _recorded_failures(group):
     return sum(1 for a in group.get('attempts', []) if a.get('status') == 'failed')
 
 
@@ -46,7 +55,7 @@ def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=Non
         if deadline is not None and now() >= deadline:
             return {'group_id': group_id, 'status': 'pending', 'attempts': tries, 'error': last, 'kind': kind}
         tries += 1
-        before_attempts=_failed_attempts(next(g for r in service.load(path)['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id))
+        before_attempts=_recorded_failures(next(g for r in service.load(path)['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id))
         try:
             service.run_group(path, run_id, group_id, cancel)
             return {'group_id': group_id, 'status': 'completed', 'attempts': tries, 'error': '', 'kind': ''}
@@ -56,7 +65,7 @@ def run_group_with_retry(path, run_id, group_id, *, max_attempts=3, deadline=Non
             # Record that failure too, so a resumable slice cannot loop forever.
             latest=service.load(path)
             current=next(g for r in latest['runs'] if r['id']==run_id for g in r['groups'] if g['id']==group_id)
-            if current['status']!='completed' and _failed_attempts(current)==before_attempts:
+            if current['status']!='completed' and _recorded_failures(current)==before_attempts:
                 current['status']='failed';current.setdefault('attempts',[]).append({'at':service.now(),'status':'failed','error':last[:300]})
                 service.save(path,latest)
             kind = classify_error(last)

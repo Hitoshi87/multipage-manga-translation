@@ -132,6 +132,11 @@ def acceptable(old, new, source, budget):
     new = new.strip()
     if not new or len(new) > len(old) * .92 or len(new) > budget * 1.15:
         return False
+    from .dialogue import adds_address_terms, HONORIFIC
+    if adds_address_terms(old,new):
+        return False
+    if HONORIFIC.search(new) and not HONORIFIC.search(old):
+        return False
     if 'japanese_left' in qa_warnings(source, new) or 'odd_symbols' in qa_warnings(source, new):
         return False
     return sorted(PLACEHOLDER.findall(source)) == sorted(PLACEHOLDER.findall(new))

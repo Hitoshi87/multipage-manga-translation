@@ -1,7 +1,7 @@
 /* Photoshop-only operations; shared by the UI and real Photoshop smoke tests. */
 var MTA = (function () {
     var serial = 0;
-    var uiVersion = '1107-ui.4';
+    var uiVersion = '1107-ui.5';
     function inputPolicy(engineId, mode) {
         var legacy = engineId === 'baseline', clean = !mode.alreadyClean;
         return {legacyTools:legacy && clean, fullPage:legacy && clean,
@@ -113,6 +113,36 @@ var MTA = (function () {
         }
         return ('00000000'+a.toString(16)).slice(-8)+('00000000'+b.toString(16)).slice(-8);
     }
+    // Recognize one rename only when the previous complete fingerprint is
+    // reconstructed and the chronological order is unchanged. Fingerprints
+    // cover paths, sizes and mtimes, not file contents.
+    function sourceRenameCandidate(folder, files, oldName, expectedKey) {
+        oldName=String(oldName);if(!oldName || /[\\\/]/.test(oldName))return null;
+        var i,j,now=[],candidate=null,matches=0;
+        function natural(a,b){
+            var aa=a.match(/\d+|\D+/g),bb=b.match(/\d+|\D+/g);
+            for(var z=0;z<Math.min(aa.length,bb.length);z++){
+                var av=/^\d+$/.test(aa[z])?Number(aa[z]):aa[z].toLowerCase();
+                var bv=/^\d+$/.test(bb[z])?Number(bb[z]):bb[z].toLowerCase();
+                if(av<bv)return -1;if(av>bv)return 1;
+            }
+            return aa.length-bb.length;
+        }
+        for(i=0;i<files.length;i++){now.push(decodeURI(files[i].name));if(decodeURI(files[i].name)===oldName)return null;}
+        var sortedNow=now.slice(0).sort(natural),rank={};
+        for(i=0;i<sortedNow.length;i++)rank[sortedNow[i]]=i;
+        for(i=0;i<files.length;i++){
+            var renamed=decodeURI(files[i].name),pos=rank[renamed];
+            // The old name must occupy exactly the same sorted slot. Reject
+            // equal natural-sort keys, whose order is not deterministic.
+            if((pos>0 && natural(sortedNow[pos-1],oldName)>=0) ||
+               (pos+1<sortedNow.length && natural(oldName,sortedNow[pos+1])>=0))continue;
+            var prior=files.slice(0),f=files[i];
+            prior[i]={fsName:(new File(folder+'/'+oldName)).fsName,name:oldName,length:f.length,modified:f.modified};
+            if(sourceProjectKey(folder,prior)===expectedKey){matches++;candidate=renamed;}
+        }
+        return matches===1?candidate:null;
+    }
     function automaticClickAllowed(running,lastAction,lastEnd,action,now) {
         return !running && !(lastAction===action && now-lastEnd<1500);
     }
@@ -211,7 +241,8 @@ var MTA = (function () {
             if (copy.mode !== DocumentMode.RGB) copy.changeMode(ChangeMode.RGB);
             copy.bitsPerChannel = BitsPerChannelType.EIGHT;
             var file = new File(folder.fsName + '/input.png');
-            copy.saveAs(file, new PNGSaveOptions(), true, Extension.LOWERCASE);
+            var pngOptions=new PNGSaveOptions();pngOptions.compression=3;pngOptions.interlaced=false;
+            copy.saveAs(file, pngOptions, true, Extension.LOWERCASE);
             return file;
         } finally { if (copy) copy.close(SaveOptions.DONOTSAVECHANGES); app.activeDocument = doc; }
     }
@@ -344,7 +375,18 @@ var MTA = (function () {
         var sorted=sizes.slice(0).sort(function(a,b){return a-b;});
         return Math.max(minSize,factor*sorted[Math.floor((sorted.length-1)/2)]);
     }
-    var lastLayoutInfo=null;
+    var lastLayoutInfo=null, fontMetricCache={}, fontMetricKeys=[];
+    function readableLeading(options, inkRatio) {
+        return Math.max(Number(options.leading)||1.3, (Number(inkRatio)||1.15)+.10,
+                        options.autoLeading===true?1.3:1);
+    }
+    function normalHorizontalText(t) {
+        // Do not inherit a previously selected vertical or transformed Type style.
+        t.direction=Direction.HORIZONTAL;
+        t.horizontalScale=100;t.verticalScale=100;t.tracking=0;
+        t.baselineShift=UnitValue(0,'pt');
+        t.capitalization=TextCase.NORMAL;t.fauxBold=false;t.fauxItalic=false;
+    }
     function rectShape(box){
         var rows=[],y0=Math.floor(box[1]),y1=Math.ceil(box[1]+box[3]);
         for(var y=y0;y<y1;y++)rows.push([y,box[0],box[0]+box[2]]);
@@ -396,6 +438,7 @@ var MTA = (function () {
         return capitalise(t);
     }
     function addText(doc, group, region, translation, options) {
+        lastLayoutInfo=null;
         // Case affects only the rendered text layer, never the saved translation.
         translation = normalizeText(translation, options.uppercase === true ? 'upper' : (options.caseMode || 'sentence'));
         var shape = region.shape && !region.safe_limit ? region.shape : null;
@@ -408,12 +451,12 @@ var MTA = (function () {
             layer.name = region.id + ' | ' + translation.substr(0, 40).replace(/[\r\n]/g, ' ');
             var t = layer.textItem;
             t.kind = TextType.POINTTEXT;
+            normalHorizontalText(t);
             t.font = options.font;
             t.justification = Justification.CENTER;
             t.position = [UnitValue(doc.width.as('px')/2, 'px'), UnitValue(doc.height.as('px')/2, 'px')];
             t.useAutoLeading = false;
             t.antiAliasMethod = AntiAlias.SHARP;
-            var lead = configureLeading(t, options);
             var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
             var maxW = box[2] - 4, maxH = box[3] - 4;
             function measure(content) {
@@ -422,14 +465,27 @@ var MTA = (function () {
             }
             var refSize=100;
             t.size=UnitValue(refSize*72/doc.resolution,'pt');
-            var wordCache={}, spaceW=(measure('a a')[0]-measure('aa')[0])/refSize, refRatio=measure('ẤỮộgj')[1]/refSize;
-            // Font metrics relative to the baseline of 'x' (bottom of its ink box).
-            function inkTop(content){t.contents=content;return bounds(layer)[1];}
-            t.contents='x';var baseRef=bounds(layer)[3];
-            var accRatio=(baseRef-inkTop('Ấ'))/refSize, capRatio=(baseRef-inkTop('H'))/refSize;
+            var metricKey='$'+options.font+'@'+doc.resolution+'@'+String(t.capitalization)+'@'+t.fauxBold+'@'+t.fauxItalic,
+                metrics=fontMetricCache[metricKey];
+            if(!metrics){
+                metrics={words:{},count:0,space:(measure('a a')[0]-measure('aa')[0])/refSize,ink:measure('ẤỮộgj')[1]/refSize};
+                // Font metrics relative to the baseline of 'x'.
+                t.contents='x';var baseRef=bounds(layer)[3];
+                t.contents='Ấ';var accentTop=bounds(layer)[1];
+                t.contents='H';var capTop=bounds(layer)[1];
+                metrics.acc=(baseRef-accentTop)/refSize;metrics.cap=(baseRef-capTop)/refSize;
+                if(fontMetricKeys.length>=8)delete fontMetricCache[fontMetricKeys.shift()];
+                fontMetricKeys.push(metricKey);fontMetricCache[metricKey]=metrics;
+            }
+            var spaceW=metrics.space,refRatio=metrics.ink,accRatio=metrics.acc,capRatio=metrics.cap;
+            var spacing={autoLeading:options.autoLeading,leading:readableLeading(options,refRatio)},lead=configureLeading(t,spacing);
             if(!(accRatio>0&&accRatio<2))accRatio=undefined;
             if(!(capRatio>0&&capRatio<2))capRatio=undefined;
-            function wordW(w){if(!w)return 0;if(wordCache[w]===undefined)wordCache[w]=measure(w)[0]/refSize;return wordCache[w];}
+            function wordW(w){if(!w)return 0;var key='$'+w;if(metrics.words[key]===undefined){
+                var width=measure(w)[0]/refSize;
+                if(metrics.count>=2048){metrics.words={};metrics.count=0;}
+                metrics.words[key]=width;metrics.count++;
+            }return metrics.words[key];}
             function unitWidth(str){var ws=str.split(' '),sum=0;for(var k=0;k<ws.length;k++)sum+=wordW(ws[k]);return sum+spaceW*(ws.length-1);}
             var layoutShape=shape||rectShape(box), paragraphs=translation.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
             var cap=options.maxCap!==undefined?options.maxCap:options.max, best=null;
@@ -438,6 +494,9 @@ var MTA = (function () {
             for(var tries=0;tries<14;tries++){
                 var plan=planLayout(layoutShape,paragraphs,unitWidth,refRatio,{min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12});
                 if(!plan)break;
+                // The sizing pass only chooses a page cap; the final pass
+                // verifies actual Photoshop bounds once for every kept layer.
+                if(options.dryRun){best=plan;break;}
                 var ok=true,axis=plan.axis;
                 t.size=UnitValue(plan.size*72/doc.resolution,'pt');
                 applyLeading(t, lead, plan.lead, doc.resolution);
@@ -475,9 +534,24 @@ var MTA = (function () {
             });
             t.contents=best.content;
             if(!groupedFit)throw Error(region.id + ': chữ vượt biên bubble sau khi nhóm layer');
+            paragraphText(layer,box,best.size,doc.resolution);
             return layer;
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=previousQuotes; }
+    }
+    function paragraphText(layer, box, size, resolution) {
+        var t=layer.textItem, before=bounds(layer), content=t.contents;
+        t.kind=TextType.PARAGRAPHTEXT;
+        t.width=UnitValue(Math.max(box[2]-4,before[2]-before[0]+4),'px');
+        // Leave room for Photoshop's first-baseline inset and descenders;
+        // all visible ink is checked independently against the bubble.
+        t.height=UnitValue(Math.max(box[3],before[3]-before[1]+size*2),'px');
+        t.contents=content;
+        var after=bounds(layer);
+        if(Math.abs((after[3]-after[1])-(before[3]-before[1]))>1 ||
+           Math.abs((after[2]-after[0])-(before[2]-before[0]))>1)
+            throw Error('Khung thoại làm đổi dòng hoặc ẩn chữ; cần duyệt lại.');
+        layer.translate(UnitValue((before[0]+before[2]-after[0]-after[2])/2,'px'),UnitValue(before[1]-after[1],'px'));
     }
     // Recovery placement deliberately does not promise to fit the region.
     // Preserve the whole string in a visible, movable Photoshop text layer.
@@ -488,10 +562,13 @@ var MTA = (function () {
             if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = false;
             layer.kind = LayerKind.TEXT; layer.name = name;
             var t = layer.textItem; t.kind = TextType.POINTTEXT;
+            normalHorizontalText(t);
             try { t.font = options.font; } catch (_) { t.font = 'ArialMT'; }
             t.justification = Justification.CENTER;
             t.size = UnitValue(Math.max(4, options.min) * 72 / doc.resolution, 'pt');
-            t.useAutoLeading = false; t.leading = UnitValue(Math.max(4, options.min) * options.leading * 72 / doc.resolution, 'pt');
+            t.contents='ẤỮộgj';var metricBounds=bounds(layer), fallbackSize=Math.max(4,options.min);
+            var fallbackLead=configureLeading(t,{autoLeading:options.autoLeading,leading:readableLeading(options,(metricBounds[3]-metricBounds[1])/fallbackSize)});
+            applyLeading(t,fallbackLead,fallbackSize*fallbackLead.ratio,doc.resolution);
             t.position = [UnitValue(center[0], 'px'), UnitValue(center[1], 'px')];
             var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
             var paragraphs=String(text).replace(/\r\n|\r/g,'\n').split('\n'), output=[];
@@ -509,6 +586,8 @@ var MTA = (function () {
             }
             t.contents=output.join('\r');
             layer.move(group, ElementPlacement.INSIDE);
+            var fallbackBounds=bounds(layer);
+            paragraphText(layer,[fallbackBounds[0]-2,fallbackBounds[1]-2,limit+4,fallbackBounds[3]-fallbackBounds[1]+fallbackSize*2],fallbackSize,doc.resolution);
             return layer;
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = previousQuotes; }
@@ -827,42 +906,33 @@ var MTA = (function () {
         return cleared;
     }
     function saveAsWithTempFallback(doc, target, opts) {
+        var dialogs=app.displayDialogs;
+        app.displayDialogs=DialogModes.NO;
         try {
-            doc.saveAs(target, opts, true, Extension.LOWERCASE);
-        } catch (saveErr) {
-            try { if (target.exists) target.remove(); } catch (_) {}
-            var ext = target.name.match(/\.[^.]+$/);
-            var tmp = new File(Folder.temp.fsName + '/mta_export_' + unique() + (ext ? ext[0] : ''));
             try {
+                doc.saveAs(target, opts, true, Extension.LOWERCASE);
+            } catch (saveErr) {
+                try { if (target.exists) target.remove(); } catch (_) {}
+                var ext = target.name.match(/\.[^.]+$/);
+                var tmp = new File(Folder.temp.fsName + '/mta_export_' + unique() + (ext ? ext[0] : ''));
                 try {
-                    doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
-                } catch (tmpErr) {
-                    if (ext && ext[0].toLowerCase() === '.pdf') {
-                        var savedNoFx = false;
-                        if (clearTextStrokeFX(doc, doc)) {
+                    try {
+                        doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
+                    } catch (tmpErr) {
+                        // An editable export must retain text and layer effects.
+                        // Never silently turn it into a flattened PDF to hide a save failure.
+                        if (opts && (opts.layers === true || opts.preserveEditing === true)) throw tmpErr;
+                        if (ext && ext[0].toLowerCase() === '.pdf' && clearTextStrokeFX(doc, doc)) {
                             try { if (tmp.exists) tmp.remove(); } catch (_) {}
-                            try {
-                                doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
-                                savedNoFx = true;
-                            } catch (_) {}
-                        }
-                        if (!savedNoFx) {
-                            if (opts && opts.layers === true) {
-                                try { if (tmp.exists) tmp.remove(); } catch (_) {}
-                                doc.saveAs(tmp, pdfSaveOptions({pdfLayers: false}), true, Extension.LOWERCASE);
-                            } else {
-                                throw tmpErr;
-                            }
-                        }
-                    } else {
-                        throw tmpErr;
+                            doc.saveAs(tmp, opts, true, Extension.LOWERCASE);
+                        } else throw tmpErr;
                     }
+                    if (!tmp.exists || !tmp.copy(target.fsName)) throw saveErr;
+                } finally {
+                    try { if (tmp.exists) tmp.remove(); } catch (_) {}
                 }
-                if (!tmp.exists || !tmp.copy(target.fsName)) throw saveErr;
-            } finally {
-                try { if (tmp.exists) tmp.remove(); } catch (_) {}
             }
-        }
+        } finally { app.displayDialogs=dialogs; }
     }
     function saveCopy(doc, folder, base, exports, kind, savedFiles) {
         mkdir(folder);
@@ -908,6 +978,6 @@ var MTA = (function () {
         }
         return savePsd ? psd : pdf;
     }
-    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
+    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, sourceRenameCandidate:sourceRenameCandidate, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
             snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();

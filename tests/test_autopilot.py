@@ -9,6 +9,15 @@ from manga_ai.translation import autopilot, service
 
 
 class AutopilotTests(unittest.TestCase):
+    def test_gateway_outage_preserves_group_budget_and_historical_evidence(self):
+        group = {'attempts': [
+            {'status': 'failed', 'error': 'API upstream temporarily unavailable'},
+            {'status': 'failed', 'error': 'Invalid translation JSON',
+             'response_excerpt': 'Upstream temporarily unavailable, please retry.'},
+            {'status': 'failed', 'error': 'Invalid translation JSON'}]}
+        self.assertEqual(autopilot._failed_attempts(group), 1)
+        self.assertEqual(autopilot.classify_error('API upstream temporarily unavailable'), 'systemic')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -27,6 +36,21 @@ class AutopilotTests(unittest.TestCase):
     def ok(self, profile, prompt, payload):
         rows = [{'id': x['id'], 'vi': 'Xin chào', 'flags': []} for x in payload['segments']]
         return json.dumps({'translations': rows}), {'usage': {'prompt_tokens': 100, 'completion_tokens': 20}, 'latency_ms': 2000, 'model_returned': 'm'}
+
+    def test_authentication_failures_do_not_park_group_before_key_is_fixed(self):
+        with patch.object(service,'call_provider',side_effect=ValueError('API HTTP 401')) as provider:
+            for _ in range(4):
+                report=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1,max_groups=1,max_slice_attempts=1)
+                self.assertTrue(report['aborted'])
+                self.assertEqual(report['pending'],1)
+            self.assertEqual(provider.call_count,4)
+        run=service.load(self.project)['runs'][-1]
+        self.assertEqual(len(run['groups'][0]['attempts']),4,'audit history is preserved')
+        with patch.object(service,'call_provider',side_effect=self.ok) as provider:
+            report=autopilot.autopilot(self.project,auto_exclude=False,max_page_ordinal=1,max_groups=1,max_slice_attempts=1)
+            self.assertTrue(report['done'])
+            self.assertEqual(report['completed'],1)
+            self.assertEqual(provider.call_count,1)
 
     def test_streaming_reuses_previous_results_and_context_without_future_pages(self):
         requests=[]

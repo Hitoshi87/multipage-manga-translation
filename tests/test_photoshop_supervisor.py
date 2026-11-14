@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +26,76 @@ class SupervisorTest(unittest.TestCase):
         write_json(job, {'schema': 1, 'script': str(script)})
         (root / 'ready').touch()
         return job
+
+    def test_auth_wait_retries_only_after_key_change_or_manual_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = {}
+            status = root / 'status.json'
+            progress = root / 'progress.json'
+            write_json(progress, {'message': 'Trang 143'})
+            with patch.object(supervisor, 'credential_version', return_value=('file', (2,))), \
+                 patch.object(supervisor, 'notify_user'):
+                self.assertTrue(supervisor.wait_for_auth_repair({'progress': str(progress)}, root, state, status, ('file', (1,)), sleep=lambda _: None))
+            self.assertEqual(read_json(status)['state'], 'waiting_auth')
+            self.assertEqual(read_json(progress)['state'], 'waiting_auth')
+            self.assertNotIn('143', read_json(progress)['message'])
+            (root / 'resume').touch()
+            with patch.object(supervisor, 'notify_user'):
+                self.assertTrue(supervisor.wait_for_auth_repair({}, root, state, status, ('missing', None), sleep=lambda _: None))
+            self.assertFalse((root / 'resume').exists())
+            (root / 'cancel').touch()
+            with patch.object(supervisor, 'notify_user'):
+                self.assertFalse(supervisor.wait_for_auth_repair({}, root, state, status, ('missing', None), sleep=lambda _: None))
+
+    def test_credential_version_respects_environment_precedence(self):
+        from manga_ai.translation import providers
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(providers, 'key_file', return_value=Path(tmp) / 'key'), \
+             patch.dict(os.environ, {'TEST_SUPERVISOR_KEY': ''}):
+            self.assertEqual(supervisor.credential_version('TEST_SUPERVISOR_KEY'), ('missing', None))
+            (Path(tmp) / 'key').write_text('secret', encoding='utf8')
+            self.assertEqual(supervisor.credential_version('TEST_SUPERVISOR_KEY')[0], 'file')
+            os.environ['TEST_SUPERVISOR_KEY'] = 'secret'
+            self.assertEqual(supervisor.credential_version('TEST_SUPERVISOR_KEY'), ('environment', None))
+
+    def test_auth_failure_waits_then_retries_same_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = self.make_job(tmp)
+            attempts = []
+            def attempt(app, wrapper, **kwargs):
+                attempts.append(Path(wrapper).read_text(encoding='utf8'))
+                response = {'state': 'failed', 'message': 'Đã dừng dịch: API HTTP 401'} if len(attempts) == 1 else {'state': 'complete'}
+                write_json(Path(wrapper).with_suffix('.json'), response)
+                return SimpleNamespace(stderr='')
+            with patch.object(supervisor, 'select_process', return_value=(11, '/Photoshop.app')), \
+                 patch.object(supervisor, 'launch_attempt', side_effect=attempt), \
+                 patch.object(supervisor, 'wait_for_auth_repair', return_value=True) as wait:
+                result = supervisor.run_job(job, sleep=lambda _: None)
+            self.assertEqual(result['state'], 'complete')
+            self.assertEqual(len(attempts), 2)
+            self.assertTrue(all('MTA_SUPERVISED_CURSOR=0' in attempt for attempt in attempts))
+            wait.assert_called_once()
+
+    def test_upstream_outage_cools_down_then_resumes_same_cursor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = self.make_job(tmp)
+            attempts = []
+            def attempt(app, wrapper, **kwargs):
+                attempts.append(Path(wrapper).read_text())
+                write_json(Path(wrapper).with_suffix('.json'),
+                           {'state': 'failed', 'message': 'API upstream temporarily unavailable'} if len(attempts)<3 else {'state': 'complete'})
+                return SimpleNamespace(stderr='')
+            delays = []
+            def sleep(seconds):
+                delays.append(seconds)
+                self.assertEqual(read_json(job.parent/'supervisor_status.json')['state'], 'waiting_api')
+            with patch.object(supervisor, 'select_process', return_value=(11, '/Photoshop.app')), \
+                 patch.object(supervisor, 'launch_attempt', side_effect=attempt):
+                result = supervisor.run_job(job, sleep=sleep)
+            self.assertEqual(result['state'], 'complete')
+            self.assertEqual(sum(delays), 90)
+            self.assertTrue(all('MTA_SUPERVISED_CURSOR=0' in a for a in attempts))
 
     def test_crash_retries_same_cursor_then_recycles_and_completes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -67,6 +138,49 @@ class SupervisorTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, 'còn chạy'):
                     supervisor.run_job(job, sleep=lambda _: None)
                 start.assert_not_called()
+
+    def test_transient_minus_600_retries_only_after_safe_barrier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = self.make_job(tmp)
+            wrappers = []
+            def attempt(app, wrapper, **kwargs):
+                wrappers.append(Path(wrapper))
+                if len(wrappers)==1:
+                    return SimpleNamespace(stderr='execution error: application not running. (-600)')
+                write_json(Path(wrapper).with_suffix('.json'), {'state':'complete'})
+                return SimpleNamespace(stderr='')
+            with patch.object(supervisor,'select_process',return_value=(11,'/Photoshop.app')), \
+                 patch.object(supervisor,'launch_attempt',side_effect=attempt), \
+                 patch.object(supervisor,'process_alive',return_value=True), \
+                 patch.object(supervisor,'javascript_barrier',side_effect=[False,True]) as barrier, \
+                 patch.object(supervisor,'start_photoshop') as restart:
+                result=supervisor.run_job(job,sleep=lambda _:None)
+            self.assertEqual(result['state'],'complete')
+            self.assertEqual(result['cursor'],0)
+            self.assertEqual(len(wrappers),2)
+            self.assertTrue(wrappers[0].with_suffix('.revoked').exists())
+            self.assertEqual(barrier.call_count,2)
+            restart.assert_not_called()
+
+    def test_minus_600_never_retries_if_script_started_or_barrier_fails(self):
+        for mode in ('started','barrier_failure','starts_during_barrier'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                job=self.make_job(tmp)
+                def attempt(app,wrapper,**kwargs):
+                    if mode=='started':kwargs['started'].touch()
+                    return SimpleNamespace(stderr='application not running (-600)')
+                def barrier(app):
+                    if mode=='starts_during_barrier':
+                        next(Path(tmp).glob('attempt_*.jsx')).with_suffix('.started').touch()
+                    return mode!='barrier_failure'
+                with patch.object(supervisor,'select_process',return_value=(11,'/Photoshop.app')), \
+                     patch.object(supervisor,'launch_attempt',side_effect=attempt) as launch, \
+                     patch.object(supervisor,'process_alive',return_value=True), \
+                     patch.object(supervisor,'javascript_barrier',side_effect=barrier), \
+                     patch.object(supervisor,'start_photoshop') as restart:
+                    with self.assertRaises(RuntimeError):supervisor.run_job(job,sleep=lambda _:None)
+                self.assertEqual(launch.call_count,1)
+                restart.assert_not_called()
 
     def test_crash_loop_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -268,6 +382,11 @@ function CancelFile(path){this.path=path;Object.defineProperty(this,'exists',{ge
 CancelFile.prototype.open=function(){return true};CancelFile.prototype.write=function(){};CancelFile.prototype.close=function(){cancelled=true};
 const ctx2={File:CancelFile,$:{global:{},evalFile(){called=true}}};vm.runInNewContext(source,ctx2);
 assert.strictEqual(called,false);assert.deepStrictEqual(ctx2.$.global,{});
+let opened=false;
+function RevokedFile(path){this.exists=/\.revoked$/.test(path)}
+RevokedFile.prototype.open=function(){opened=true;return true};
+const ctx3={File:RevokedFile,$:{global:{},evalFile(){throw Error('revoked event ran')}}};
+vm.runInNewContext(source,ctx3);assert.strictEqual(opened,false);assert.deepStrictEqual(ctx3.$.global,{});
 '''
                 subprocess.run(['node', '-e', js, str(wrapper)], check=True)
                 write_json(Path(wrapper).with_suffix('.json'), {'state': 'complete'})

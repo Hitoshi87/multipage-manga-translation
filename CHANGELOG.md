@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1107-ui.5 — 2026-11-14
+
+- Chạy dài tiếp tục đúng checkpoint, thử kết nối lại Photoshop an toàn, chờ cập nhật API key hoặc phục hồi upstream thay vì bỏ nhóm dịch.
+- Thoại mặc định là Horizontal Paragraph Text, giãn dòng theo dấu tiếng Việt; cache số đo font và giảm thao tác lặp khi ước lượng cỡ chữ.
+- Thêm sửa hàng loạt PDF/PSD cũ, đổi tối đa ba tên, rút phần tên và bỏ kính ngữ cho mọi tên. Giữ layer và checkpoint theo thiết lập; lỗi lưu không âm thầm flatten PDF giữ layer.
+- Lượt dịch mới nhận ngữ cảnh Nhật–Việt trước đó, mặc định sáu câu; bổ sung quy tắc giữ xưng hô và hậu xử lý kính ngữ có gạch nối.
+- Snapshot PNG nén lossless; xóa snapshot kiểm tra sau khi đối chiếu thành công. Thêm công cụ nén cache PNG cũ, kiểm tra nguyên vẹn dữ liệu ảnh và metadata trước khi thay file.
+- Kiểm thử native trên Photoshop 26.11.7/macOS; chất lượng dịch toàn volume mới và vận hành native Windows vẫn cần đối chiếu thực tế.
 
 - Đưa Magi vào profile `1107` (manifest có pin SHA-256) và dependency PyTorch/transformers vào `requirements-ai.txt`, để checkbox Magi sẵn sàng sau cài đặt chuẩn. Tải thêm khoảng 2 GB.
 - Sửa PDF xuất từ script quá nặng: nén JPEG, không thumbnail; PDF mặc định flatten, PDF giữ layer (nhúng cả PSD) thành tùy chọn riêng.

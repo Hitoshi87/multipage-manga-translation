@@ -87,6 +87,10 @@ def _dispatch(request):
             return preset(request['name'])
         if action == 'load':
             return service.load(request['project'])
+        if action == 'resume_inventory':
+            state = service.load(request['project'])
+            return {'pages': [{'ordinal': page['ordinal'], 'page_id': page['page_id']} for page in state['pages']],
+                    'streaming': bool(state['runs'] and state['runs'][-1].get('streaming'))}
         if action == 'index':
             return service.index_page(request['project'], request['manifest'], request['page_id'], request['ordinal'])
         if action == 'source':

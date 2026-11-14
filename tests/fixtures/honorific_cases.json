@@ -1,0 +1,8 @@
+[
+  {"in":"Ken-san, Yuki - kun và TANAKA–SAMA!", "out":"Ken, Yuki và TANAKA!", "count":3},
+  {"in":"Ajisawa-san-kun: San Francisco, san hô, Shinjuku san lấp.", "out":"Ajisawa: San Francisco, san hô, Shinjuku san lấp.", "count":2},
+  {"in":"{{Ken-san}} {Yuki_kun} <tag-san>Ken-chan</tag-san>", "out":"{{Ken-san}} {Yuki_kun} <tag-san>Ken</tag-san>", "count":1},
+  {"in":"123-san, Ken-santo, T-tớ, Ken\n- sensei.", "out":"123-san, Ken-santo, T-tớ, Ken.", "count":1},
+  {"in":"佐藤-san, thầy Tanaka-senpai, Osaka-dono.", "out":"佐藤, thầy Tanaka, Osaka.", "count":3},
+  {"in":"Chào Ken, cậu đến rồi à?", "out":"Chào Ken, cậu đến rồi à?", "count":0}
+]

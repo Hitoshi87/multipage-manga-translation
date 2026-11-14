@@ -90,6 +90,11 @@ def openai_compatible(profile, system, payload):
                 if delay:
                     time.sleep(delay)
                 continue
+            # Some gateways return an outage notice as assistant content with
+            # HTTP 200 and finish_reason=stop. It is not a translation failure.
+            content = choice.get('message', {}).get('content')
+            if isinstance(content, str) and content.strip().lower() == 'upstream temporarily unavailable, please retry.':
+                raise ValueError('API upstream temporarily unavailable')
             meta = {'model_returned':result.get('model'), 'usage':result.get('usage'),
                     'latency_ms':round((time.monotonic()-started)*1000),
                     'finish_reason':choice.get('finish_reason')}
