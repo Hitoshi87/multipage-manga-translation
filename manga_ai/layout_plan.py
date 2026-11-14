@@ -173,6 +173,8 @@ def plan_layout(shape, paragraphs, unit_width, ref_ratio, o):
         for dy in shifts:
             best = None
             for n in range(nmin, min(max_lines, nmin + max(4, math.ceil(nmin * .6))) + 1):
+                if o.get('lineCount') and n != o['lineCount']:
+                    continue
                 c = try_at(size, n, dy)
                 if c and (best is None or c['quality'] < best['quality']):
                     best = c

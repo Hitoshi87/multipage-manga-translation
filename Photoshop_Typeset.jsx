@@ -1,5 +1,7 @@
 #target photoshop
 #include "scripts/json.jsxinc"
+#include "scripts/lettering_styles.jsxinc"
+#include "scripts/style_manager.jsxinc"
 #include "scripts/core.jsxinc"
 #include "scripts/repair.jsxinc"
 /* Manga Typesetter — UI 1107-ui.5. File > Scripts > Browse. UTF-8. */
@@ -123,11 +125,16 @@
             if (fontIds[i] === 'Arial-ItalicMT') boxFont.selection = i;
             if (fontIds[i] === 'Arial-BoldMT') shoutFont.selection = i;
         }
-        var saveFonts = roleFontRow.add('button', undefined, 'Lưu font');
+        var saveFonts = roleFontRow.add('button', undefined, 'Lưu font & cỡ');
         var sampleFonts = roleFontRow.add('button', undefined, 'Font comic mẫu');
         var autoRoles = typesetTab.add('checkbox', undefined, 'Tự chọn font theo hình bong bóng (có thể sửa từng vùng)'); autoRoles.value = true;
         var autoSize = typesetTab.add('checkbox', undefined, 'Cỡ chữ lớn tự động theo bubble (tối đa 1,3× cỡ trung vị của trang)');
         autoSize.value = true;
+        var sizingRow=typesetTab.add('group');sizingRow.add('statictext',undefined,'Cỡ toàn truyện:');
+        var sizePolicy=sizingRow.add('dropdownlist',undefined,['Tự do theo bong bóng','Đồng đều ±10%','Cố định tuyệt đối']);sizePolicy.selection=1;
+        var standardSize=sizingRow.add('edittext',undefined,'18');standardSize.characters=5;
+        sizingRow.add('statictext',undefined,'px chuẩn (trang 1008×1440)');
+        standardSize.helpTip='Một cỡ dùng cho mọi trang và bong bóng; ảnh 3024×4320 tự nhân 3. Cố định tuyệt đối: câu không vừa được đánh dấu cần rút gọn.';
         var uppercaseText = typesetTab.add('checkbox', undefined, 'In hoa chữ khi typeset (không đổi bản dịch đã lưu)');
         var fontSettingsFile = new File(Folder.userData.fsName + '/MangaTypesetterLite/font_profiles.json');
         function chooseFontById(control, id) {
@@ -139,8 +146,44 @@
                 var savedFonts = MJSON.parse(MTA.read(fontSettingsFile));
                 chooseFontById(font, savedFonts.dialogue); chooseFontById(boxFont, savedFonts.box); chooseFontById(shoutFont, savedFonts.shout);
                 if (typeof savedFonts.automatic === 'boolean') autoRoles.value = savedFonts.automatic;
+                if(savedFonts.sizePolicy){var modeIndex={adaptive:0,uniform:1,fixed:2}[savedFonts.sizePolicy];if(modeIndex!==undefined)sizePolicy.selection=modeIndex;}
+                if(savedFonts.standardSize>=4 && savedFonts.standardSize<=250)standardSize.text=String(savedFonts.standardSize);
             } catch (_) {}
         }
+        var styleLibraryFile=new File(Folder.userData.fsName+'/MangaTypesetterLite/series_styles.json');
+        var styleLibrary={schema:1,profiles:[]},styleLoadError='',supervisedStyleProfile=null;
+        try{if(styleLibraryFile.exists)styleLibrary=MTAStyles.library(MJSON.parse(MTA.read(styleLibraryFile)));}catch(styleError){styleLoadError=String(styleError.message||styleError);}
+        var styleRow=typesetTab.add('group');styleRow.add('statictext',undefined,'Style bộ truyện:');
+        var seriesStyles=styleRow.add('dropdownlist',undefined,[]);seriesStyles.preferredSize.width=245;
+        var manageStyles=styleRow.add('button',undefined,'Tạo / sửa / nhập TypeR');
+        var easyStyleRow=easyTab.add('group');easyStyleRow.add('statictext',undefined,'Style bộ truyện:');
+        var easySeriesStyles=easyStyleRow.add('dropdownlist',undefined,[]);easySeriesStyles.preferredSize.width=245;
+        var easyManageStyles=easyStyleRow.add('button',undefined,'Tạo / sửa / nhập TypeR');
+        function selectedStyleProfile(){return supervisedStyleProfile||(seriesStyles.selection&&seriesStyles.selection.index>0?styleLibrary.profiles[seriesStyles.selection.index-1]:null);}
+        function refillSeriesStyles(id){
+            var lists=[seriesStyles,easySeriesStyles];
+            for(var c=0;c<lists.length;c++){lists[c].removeAll();lists[c].add('item','Theo font & cỡ hiện tại');lists[c].selection=0;
+                for(var i=0;i<styleLibrary.profiles.length;i++){lists[c].add('item',styleLibrary.profiles[i].name);if(styleLibrary.profiles[i].id===id)lists[c].selection=i+1;}}
+        }
+        function selectSeriesByName(name){var id=null;for(var i=0;i<styleLibrary.profiles.length;i++)if(styleLibrary.profiles[i].name.toLowerCase()===String(name).toLowerCase())id=styleLibrary.profiles[i].id;refillSeriesStyles(id);}
+        seriesStyles.onChange=function(){if(seriesStyles.selection && (!easySeriesStyles.selection||easySeriesStyles.selection.index!==seriesStyles.selection.index))easySeriesStyles.selection=seriesStyles.selection.index;};
+        easySeriesStyles.onChange=function(){if(easySeriesStyles.selection && (!seriesStyles.selection||seriesStyles.selection.index!==easySeriesStyles.selection.index))seriesStyles.selection=easySeriesStyles.selection.index;};
+        function editSeriesStyles(){
+            if(styleLoadError){alert('Không đọc được thư viện style; chưa ghi đè file cũ. '+styleLoadError+'\n'+styleLibraryFile.fsName);return;}
+            try{
+                var current=selectedStyleProfile(),suggested=(typeof easyName!=='undefined'&&easyName.text)||(inputFolder?decodeURI(inputFolder.name):'Bộ truyện mới');
+                var initial=current||MTAStyles.defaults(suggested,'series_'+MTA.unique(),options());
+                var result=MTAStyleUI.edit(initial,{fontNames:fontNames,fontIds:fontIds,unique:MTA.unique,save:function(profile){
+                    var next=MTAStyles.copy(styleLibrary),found=false;
+                    for(var i=0;i<next.profiles.length;i++)if(next.profiles[i].id===profile.id){next.profiles[i]=profile;found=true;}
+                    if(!found)next.profiles.push(profile);next=MTAStyles.library(next);
+                    MTA.mkdir(styleLibraryFile.parent.fsName);MTA.writeCheckpoint(styleLibraryFile,MJSON.stringify(next));styleLibrary=next;
+                }});
+                if(result){refillSeriesStyles(result.id);status.text='Đã lưu style: '+result.name;}
+            }catch(e){alert(String(e.message||e));}
+        }
+        manageStyles.onClick=easyManageStyles.onClick=editSeriesStyles;
+        refillSeriesStyles(null);
         var exportRow = typesetTab.add('group');
         var setOutput = exportRow.add('button', undefined, 'Thư mục lưu');
         var outInfo = exportRow.add('statictext', undefined, outputFolder.fsName); outInfo.characters = 42;
@@ -151,7 +194,7 @@
         savePdf.helpTip = 'PDF nén JPEG, không giữ layer — dung lượng gần lưu tay. Cần chỉnh sửa lại thì dùng PSD.';
         var pdfLayers = formatRow.add('checkbox', undefined, 'PDF giữ layer (rất nặng)');
         pdfLayers.helpTip = 'Nhúng toàn bộ PSD vào PDF nên file có thể lớn gấp nhiều lần. Chỉ bật khi thật sự cần.';
-        var repairExisting=typesetTab.add('button',undefined,'Sửa hàng loạt PDF/PSD cũ: khung thoại + giãn dòng');
+        var repairExisting=typesetTab.add('button',undefined,'Sửa hàng loạt PDF/PSD: khung thoại + cỡ chữ + giãn dòng');
         repairExisting.helpTip='Chọn thư mục kết quả có draft_*.json. Dùng layer chữ và bản dịch sẵn có; lưu bản sửa trong SUA_THOAI. Có thể chạy lại để tiếp tục.';
         var renameNames=typesetTab.add('button',undefined,'Đổi tên nhân vật hàng loạt (tối đa 3 tên)');
         renameNames.helpTip='Đặt tối đa 3 cặp tên cũ → tên mới; đổi trong layer thoại PDF/PSD, không gọi API dịch lại.';
@@ -182,10 +225,10 @@
         var bottom = win.add('group'); bottom.alignment = 'right';
         var cancelButton = bottom.add('button', undefined, 'Hủy tác vụ');
         var close = bottom.add('button', undefined, 'Đóng');
-        var controls = [chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, leadingAuto,
+        var controls = [seriesStyles, easySeriesStyles, manageStyles, easyManageStyles, chooseFolder, openSources, page, openText, openTranslations, aiDetector, maskChoice, useLama, detailChoice, hwChoice, previewEngine, testModel, modelBatch, protectFaces, koharuOrder, magiOrder, importResult, check, rtl, lang, presets, font, boxFont, shoutFont, autoRoles, saveFonts, sampleFonts, uppercaseText, autoSize, sizePolicy, standardSize, leadingAuto,
                         minSize, maxSize, leading, translation, setOutput, png, jpg, savePsd, savePdf, pdfLayers, repairExisting, renameNames, colorMode, alreadyClean, engineChoice, reviewAll, batchCleanOnly, skipMismatch, scan, clean, typeset, chapter, pendingButton];
         repairExisting.onClick=function(){var folder=Folder.selectDialog('Chọn thư mục PDF/PSD đã xuất, có checkpoint draft_*.json');if(!folder)return;
-            run(function(){var result=MTARepair.runFolder(folder,tick),done=0,failed=0;
+            run(function(){var sizing=options(),result=MTARepair.runFolder(folder,tick,{sizing:{sizePolicy:sizing.sizePolicy,standardSize:sizing.standardSize}}),done=0,failed=0;
                 for(var i=0;i<result.log.pages.length;i++)if(result.log.pages[i].status==='complete')done++;else failed++;
                 alert((result.log.cancelled?'Đã dừng tại checkpoint. ':'')+'Đã sửa '+done+' file; cần xem lại '+failed+' file.\nKết quả: '+result.folder.fsName+'\nChi tiết: repair_log.json. Chạy lại cùng thư mục để tiếp tục.');});};
         function chooseNameRules(){
@@ -284,13 +327,16 @@
             protectFaces.enabled=p.legacyTools && featureReady('head_guard');
             testModel.enabled=p.legacyTools && modelExperimentReady() && docs.length>0;
             modelBatch.enabled=p.fullPage && modelExperimentReady();
-            var textControls=[translation,openText,openTranslations,presets,font,boxFont,shoutFont,minSize,maxSize,leading,autoRoles,saveFonts,sampleFonts,uppercaseText,autoSize,leadingAuto];
+            var textControls=[translation,openText,openTranslations,presets,font,boxFont,shoutFont,minSize,maxSize,leading,autoRoles,saveFonts,sampleFonts,uppercaseText,autoSize,leadingAuto,sizePolicy,standardSize];
             for(var ti=0;ti<textControls.length;ti++)textControls[ti].enabled=p.typeset;
+            var flexible=!sizePolicy.selection || sizePolicy.selection.index===0;
+            minSize.enabled=maxSize.enabled=autoSize.enabled=p.typeset && flexible;standardSize.enabled=p.typeset && !flexible;
             pendingButton.enabled=pendingPages.length>0;
             if(typeof easyReport!=='undefined' && easyReport)easyReport.enabled=!!lastReportHtml;
             engineNote.text=alreadyClean.value?'Chỉ typeset ảnh đã clean; không gọi engine clean.':(modelBatch.value?'Đang dùng công cụ mask toàn trang riêng, không dùng clean từng region.':'Preview và clean dùng engine '+currentEngineId()+'. '+(currentEngineId()==='baseline'?'Baseline giữ các safety gate hiện tại.':(currentEngineId()==='art_draft'?'AI tái tạo nền, kết quả cần kiểm tra; ảnh gốc được giữ.':'Engine kiểm tra mask/artwork; checkbox thử model bên tab 4 không thay đổi engine.')));
             advancedNote.text=currentEngineId()!=='baseline'?'Đã khóa công cụ legacy khi dùng '+currentEngineId()+'. Dùng preview ở tab Engine clean.':(modelExperimentReady()?'Công cụ riêng sẵn sàng. Kết quả cần kiểm tra; backend vẫn xác minh weights khi chạy.':'Thiếu model hoặc dependency cho tổ hợp đang chọn. Không tự tải thêm weights.');
         }
+        sizePolicy.onChange=function(){syncInputs();};
         function selectedEngine() {
             if(!engineChoice.selection)throw Error('Hãy chọn engine clean.');
             var e=engines[engineChoice.selection.index];
@@ -327,12 +373,14 @@
         }
         function options(doc) {
             var result = {font: fontIds[font.selection.index], fonts: {dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index]}, automatic: autoRoles.value, uppercase: uppercaseText.value, autoSize: autoSize.value, min: Number(minSize.text), max: Number(maxSize.text), autoLeading: leadingAuto.value === true, leading: leadingAuto.value === true ? 1.30 : Number(leading.text)};
-            if (!(result.min >= 4 && result.max >= result.min && result.max <= 250 && result.leading >= 1 && result.leading <= 2.5))
+            result.sizePolicy=['adaptive','uniform','fixed'][sizePolicy.selection?sizePolicy.selection.index:1];
+            if (!(result.leading >= 1 && result.leading <= 2.5) || (result.sizePolicy==='adaptive' && !(result.min >= 4 && result.max >= result.min && result.max <= 250)))
                 throw Error('Cỡ chuẩn cần 4–250, min ≤ max; giãn dòng cần 1–2.5.');
-            if(doc){
-                var scale=Math.max(1,Math.min(doc.width.as('px')/1008,doc.height.as('px')/1440));
-                result.min*=scale;result.max*=scale;
-            }
+            result.standardSize=Number(standardSize.text);
+            var scale=doc?Math.max(1,Math.min(doc.width.as('px')/1008,doc.height.as('px')/1440)):1;
+            result=MTA.letteringSizeOptions(result,scale);
+            result.styleScale=scale;result.styleProfile=selectedStyleProfile()?MTAStyles.copy(selectedStyleProfile()):null;
+            if(result.styleProfile){var missing=MTAStyles.missingFonts(result.styleProfile,fontIds);if(missing.length)throw Error('Font của bộ style chưa cài: '+missing.join(', '));}
             return result;
         }
         function translations() {
@@ -674,7 +722,7 @@
                     var group = copy.layerSets.add(); group.name = s.draft ? 'TYPESET — NHÁP CHƯA DUYỆT' : 'TYPESET — Tiếng Việt';
                     // Pass 1 (no layers kept): fit every bubble with a generous cap, then
                     // limit oversized ones to 1.25x the page median for consistent lettering.
-                    if (config.autoSize) {
+                    if (config.autoSize && config.sizePolicy==='adaptive') {
                         var dryConfig = {}, sizes = [];
                         for (var dk in config) dryConfig[dk] = config[dk];
                         dryConfig.dryRun = true; dryConfig.maxCap = config.max * 4;
@@ -685,7 +733,8 @@
                             if (!pregion) continue;
                             var prefined = (result.refined_shapes || {})[pregion.id];
                             if (prefined) { var pwith = {}, prk; for (prk in pregion) pwith[prk] = pregion[prk]; pwith.shape = prefined; pregion = pwith; }
-                            dryConfig.font = config.fonts[MTA.resolveTextRole(pregion, s.mapping[pj].translation, s.mapping[pj].font_role, config.automatic)];
+                            dryConfig.fontRole=MTA.resolveTextRole(pregion, s.mapping[pj].translation, s.mapping[pj].font_role, config.automatic);
+                            dryConfig.font = config.fonts[dryConfig.fontRole];
                             try { MTA.addText(copy, copy, pregion, s.mapping[pj].translation, dryConfig); } catch (_) {}
                             var info = MTA.lastLayout();
                             if (info && info.id === pregion.id) sizes.push(info.size);
@@ -702,14 +751,14 @@
                         var refinedShape = (result.refined_shapes || {})[region.id];
                         if (refinedShape) { var withShape = {}, rk; for (rk in region) withShape[rk] = region[rk]; withShape.shape = refinedShape; region = withShape; }
                         var role = MTA.resolveTextRole(region, (s.mapping[j].display || s.mapping[j].translation), s.mapping[j].font_role, config.automatic);
-                        config.font = config.fonts[role];
+                        config.fontRole=role;config.font = config.fonts[role];
                         var textLayer;
                         try { textLayer = MTA.addText(copy, group, region, (s.mapping[j].display || s.mapping[j].translation), config); var placed=MTA.lastLayout(); if(placed){placed.layer=textLayer;layoutInfos.push(placed);} }
                         catch (fitError) {
                             if (!s.visibleFallback && !result.experimental && !s.draft) throw fitError;
                             var safe = region.safe;
                             textLayer = MTA.addFallbackText(copy, group, s.mapping[j].translation, config,
-                                [safe[0]+safe[2]/2, safe[1]+safe[3]/2], '[CẦN CHỈNH KHUNG] ' + region.id, Math.max(safe[2], copy.width.as('px')*.16));
+                                [safe[0]+safe[2]/2, safe[1]+safe[3]/2], '[CẦN RÚT GỌN/CHỈNH KHUNG] ' + region.id + ' | ' + s.mapping[j].translation.substr(0,40), Math.max(safe[2], copy.width.as('px')*.16));
                             s.layoutFallback.push({id:region.id, reason:String(fitError.message || fitError)});
                         }
                         textLayer.name = '[' + ({dialogue:'THOẠI',box:'Ô VUÔNG',shout:'HÉT'})[role] + '] ' + (region.merged_suspect ? '[NGHI GỘP Ô — CẦN TÁCH] ' : '') + textLayer.name;
@@ -734,7 +783,7 @@
                     for (var u = 0; u < s.omittedTranslations.length; u++) {
                         var index = s.omittedTranslations[u], unplaced;
                         if (s.visibleFallback) {
-                            config.font = config.fonts.dialogue;
+                            config.fontRole='dialogue';config.font = config.fonts.dialogue;
                             unplaced = MTA.addFallbackText(copy, group, s.reviewLines[index], config,
                                 [copy.width.as('px')/2, copy.height.as('px')/2 + u*Math.max(12,config.min*1.5)], '[CHƯA GHÉP — Ở GIỮA] Câu ' + (index + 1), copy.width.as('px')*.35);
                         } else {
@@ -757,6 +806,11 @@
                 if (!tick('Chuẩn bị lưu…', 95)) throw Error('Đã hủy trước khi lưu');
                 s.savedFiles = {};
                 var saved = save ? MTA.saveCopy(copy, outputFolder, s.doc.name, {psd:savePsd.value, pdf:savePdf.value, pdfLayers:pdfLayers.value, png: png.value, jpg: jpg.value, cmykJpeg:colorModeIndex() === 2}, onlyClean ? 'clean' : (s.chapterOutput?'chapter':(s.draft?'draft':'typeset')), s.savedFiles) : null;
+                if(saved && !onlyClean){
+                    var lettering={schema:1,options:config,regions:{}};
+                    for(var si=0;si<layoutInfos.length;si++){var info=layoutInfos[si];lettering.regions['$'+info.id]={styleId:info.styleId,text:info.sourceText};}
+                    for(var format in s.savedFiles)if(/\.(psd|pdf)$/i.test(s.savedFiles[format]))MTA.writeCheckpoint(new File(s.savedFiles[format]+'.lettering.json'),MJSON.stringify(lettering));
+                }
                 if (!keepOpen) { copy.close(SaveOptions.DONOTSAVECHANGES); copy = null; }
                 tick((s.manualText.length ? 'Vùng cần clean/duyệt: '+s.manualText.length+'. ' : '') + (saved ? 'Đã lưu: ' + saved.fsName : 'Đã tạo bản sao CLEAN') + MTA.cleanResultSummary(result), 100);
                 return saved ? saved.fsName : '';
@@ -1067,25 +1121,45 @@
             try{app.runMenuItem(charIDToTypeID('FtOn'));}catch(_){}
             return {doc:doc,text:layers.text,clean:layers.clean};
         }
-        function reviewRelayout(item, newText, runId, project){
+        function reviewContext(item,chosenStyleId){
             var at=reviewFocus(item);
             if(!at.text)throw Error('Không tìm thấy layer chữ của '+item.region+'. Có thể bubble này chưa được chèn chữ.');
             if(!item.manifest)throw Error('Thiếu dữ liệu vùng chữ (manifest).');
-            var data=MJSON.parse(MTA.read(new File(item.manifest))),region=null,ri;
-            for(ri=0;ri<data.regions.length;ri++)if(data.regions[ri].id===item.region)region=data.regions[ri];
+            var data=MJSON.parse(MTA.read(new File(item.manifest))),region=null;
+            for(var ri=0;ri<data.regions.length;ri++)if(data.regions[ri].id===item.region)region=data.regions[ri];
             if(!region)throw Error('Không tìm thấy vùng '+item.region+' trong dữ liệu trang.');
             var old=at.text,group=old.parent;
             if(!group || group.typename!=='LayerSet')throw Error('Layer chữ không nằm trong nhóm TYPESET.');
-            var cfg=options(at.doc),role=/\[(Ô VUÔNG)\]/.test(old.name)?'box':(/\[(HÉT)\]/.test(old.name)?'shout':'dialogue');
-            cfg.font=cfg.fonts[role];
+            var sidecar=new File((item.file||item.psd)+'.lettering.json'),snapshot=null;
+            if(sidecar.exists){snapshot=MJSON.parse(MTA.read(sidecar));if(snapshot.schema!==1||!snapshot.options)throw Error('Dữ liệu style của trang không hợp lệ.');}
+            var cfg=snapshot?MTAStyles.copy(snapshot.options):options(at.doc);
+            if(cfg.styleProfile)cfg.styleProfile=MTAStyles.profile(cfg.styleProfile);
+            var role=/\[(Ô VUÔNG)\]/.test(old.name)?'box':(/\[(HÉT)\]/.test(old.name)?'shout':'dialogue');
+            cfg.fontRole=role;cfg.font=cfg.fonts[role];
+            var prior=snapshot&&snapshot.regions&&snapshot.regions['$'+item.region];
+            cfg.styleId=chosenStyleId===undefined?(prior&&prior.styleId||null):chosenStyleId;
+            if(!cfg.styleProfile){
+                // Legacy pages retain the font and basic typography already on the layer.
+                cfg.font=old.textItem.font;cfg.tracking=old.textItem.tracking;cfg.fauxBold=old.textItem.fauxBold;cfg.fauxItalic=old.textItem.fauxItalic;
+                try{cfg.textColor=[old.textItem.color.rgb.red,old.textItem.color.rgb.green,old.textItem.color.rgb.blue];}catch(_){}
+            }
+            return {at:at,old:old,group:group,region:region,options:cfg,sidecar:sidecar,snapshot:snapshot};
+        }
+        function reviewRelayout(item,newText,runId,project,chosenStyleId,lineCount){
+            var context=reviewContext(item,chosenStyleId),at=context.at,old=context.old,cfg=context.options;
+            cfg.lineCount=lineCount||0;
             var cut=old.name.indexOf(item.region+' |'),prefix=cut>0?old.name.substr(0,cut):'';
-            var created=MTA.addText(at.doc,group,region,newText,cfg);
-            created.name=prefix+item.region+' | '+newText.substr(0,40).replace(/[\r\n]/g,' ');
-            created.visible=old.visible;
-            if(/AI PHỤC HỒI/.test(old.name))MTA.addWhiteStroke(at.doc,created,Math.max(1,Math.min(4,at.doc.width.as('px')/480)));
-            old.remove();
-            reviewSave(at.doc);
-            // Keep the correction in the project so a re-run does not undo it (non-fatal).
+            var created=MTA.addText(at.doc,context.group,context.region,newText,cfg),placed=MTA.lastLayout();
+            try{
+                created.name=prefix+item.region+' | '+newText.substr(0,40).replace(/[\r\n]/g,' ');created.visible=old.visible;
+                if(/AI PHỤC HỒI/.test(old.name) && !MTA.addWhiteStroke(at.doc,created,Math.max(1,Math.min(4,at.doc.width.as('px')/480))))throw Error('Không tạo được viền tương phản.');
+                // Keep the original layer until the new one has passed placement and the file saves.
+                old.visible=false;reviewSave(at.doc);
+            }catch(e){old.visible=created.visible;created.remove();throw e;}
+            old.remove();reviewSave(at.doc);
+            var snapshot=context.snapshot||{schema:1,options:cfg,regions:{}};
+            snapshot.regions=snapshot.regions||{};snapshot.regions['$'+item.region]={styleId:placed&&placed.styleId||null,text:newText,lineCount:lineCount||0};
+            MTA.writeCheckpoint(context.sidecar,MJSON.stringify(snapshot));
             try{if(item.segment_id&&runId)rpc({operation:'translation_accept',project:project,run_id:runId,edits:[{id:item.segment_id,text:newText}]});}catch(_){}
         }
         function openReview(expectedProject,reviewFolder){
@@ -1104,6 +1178,11 @@
             var why=right.add('statictext',undefined,'',{multiline:true});why.preferredSize=[420,62];
             right.add('statictext',undefined,'Câu đang chèn (sửa trực tiếp rồi bấm Áp dụng):');
             var textBox=right.add('edittext',undefined,'',{multiline:true,scrolling:true});textBox.preferredSize=[420,86];
+            var styleTools=right.add('group');styleTools.add('statictext',undefined,'Style vùng này:');
+            var reviewStyle=styleTools.add('dropdownlist',undefined,['Theo vai trò / tiền tố']);reviewStyle.selection=0;reviewStyle.preferredSize.width=255;
+            var shapeTools=right.add('group'),suggestBtn=shapeTools.add('button',undefined,'Gợi ý xuống dòng');
+            var variants=shapeTools.add('dropdownlist',undefined,[]);variants.preferredSize.width=265;
+            var proposals=[],chosenProposal=null,reviewStyleIds=[null];
             var srcLine=right.add('statictext',undefined,'',{multiline:true});srcLine.preferredSize=[420,38];
             var row1=right.add('group');
             var openBtn=row1.add('button',undefined,'Mở trang và chọn layer');
@@ -1127,7 +1206,25 @@
                 head.text=open?('Còn '+open+' mục cần rà soát. [SỬA] làm trước, [XEM] chỉ cần nhìn qua.'):'Hết rồi! Không còn mục nào cần rà soát.';
                 if(shown.length){list.selection=Math.min(idx,shown.length-1);}else{why.text='';textBox.text='';srcLine.text='';}
             }
-            list.onChange=function(){var it=current();if(!it)return;why.text=it.reasons.join('\n');textBox.text=it.vi||'';srcLine.text=it.jp?'Gốc: '+it.jp:'';msg.text='';};
+            function resetProposals(){proposals=[];chosenProposal=null;variants.removeAll();}
+            function loadReviewStyles(it){
+                reviewStyle.removeAll();reviewStyle.add('item','Theo vai trò / tiền tố');reviewStyleIds=[null];reviewStyle.selection=0;
+                var file=new File((it.file||it.psd)+'.lettering.json'),snapshot=file.exists?MJSON.parse(MTA.read(file)):null;
+                var profile=snapshot?snapshot.options.styleProfile:selectedStyleProfile(),prior=snapshot&&snapshot.regions&&snapshot.regions['$'+it.region];
+                if(profile){profile=MTAStyles.profile(profile);for(var i=0;i<profile.styles.length;i++){reviewStyle.add('item',profile.styles[i].name);reviewStyleIds.push(profile.styles[i].id);if(prior&&prior.styleId===profile.styles[i].id)reviewStyle.selection=i+1;}}
+                if(prior&&prior.text)textBox.text=prior.text;
+            }
+            function styleChoice(){return reviewStyleIds[reviewStyle.selection?reviewStyle.selection.index:0];}
+            list.onChange=function(){var it=current();resetProposals();if(!it)return;why.text=it.reasons.join('\n');textBox.text=it.vi||'';srcLine.text=it.jp?'Gốc: '+it.jp:'';msg.text='';guard(function(){loadReviewStyles(it);});};
+            reviewStyle.onChange=function(){resetProposals();};textBox.onChanging=function(){chosenProposal=null;};
+            suggestBtn.onClick=function(){guard(function(){var it=current();if(!it)return;resetProposals();
+                var context=reviewContext(it,styleChoice());
+                proposals=MTA.suggestLayouts(context.at.doc,context.region,textBox.text,context.options);
+                if(!proposals.length)throw Error('Không có phương án vừa vùng chữ. Hãy rút gọn hoặc đổi style.');
+                for(var i=0;i<proposals.length;i++)variants.add('item',proposals[i].lines+' dòng · '+Math.round(proposals[i].size*10)/10+' px — '+proposals[i].text.replace(/\n/g,' / '));
+                msg.text='Có '+proposals.length+' phương án. Chọn để xem; bấm Áp dụng để đo lại, thay chữ và lưu.';
+            });};
+            variants.onChange=function(){if(!variants.selection)return;chosenProposal=proposals[variants.selection.index];textBox.text=chosenProposal.text;};
             function guard(fn){try{fn();}catch(e){msg.text='Lỗi: '+String(e.message||e);}}
             function layerStep(doc){return Math.max(2,Math.round(doc.width.as('px')/240));}
             function move(dx,dy){guard(function(){var it=current();if(!it)return;var at=reviewFocus(it);var l=at.text||at.clean;if(!l)throw Error('Không tìm thấy layer để chỉnh.');var k=layerStep(at.doc);l.translate(UnitValue(dx*k,'px'),UnitValue(dy*k,'px'));reviewSave(at.doc);msg.text='Đã chỉnh vị trí.';});}
@@ -1135,14 +1232,14 @@
             bLeft.onClick=function(){move(-1,0);};bRight.onClick=function(){move(1,0);};bUp.onClick=function(){move(0,-1);};bDown.onClick=function(){move(0,1);};
             bBig.onClick=function(){scale(106);};bSmall.onClick=function(){scale(94);};
             openBtn.onClick=function(){guard(function(){var it=current();if(!it)return;var at=reviewFocus(it);msg.text=at.text?'Đã mở trang và chọn layer chữ '+it.region+'.':'Đã mở trang (không thấy layer chữ riêng của vùng này).';});};
-            applyBtn.onClick=function(){guard(function(){var it=current();if(!it)return;var t=textBox.text.replace(/^\s+|\s+$/g,'');if(!t)throw Error('Câu trống.');reviewRelayout(it,t,queue.run_id,project);it.vi=t;msg.text='Đã chèn lại bằng lời mới và lưu PSD.';});};
+            applyBtn.onClick=function(){guard(function(){var it=current();if(!it)return;var t=textBox.text.replace(/^\s+|\s+$/g,'');if(!t)throw Error('Câu trống.');reviewRelayout(it,t,queue.run_id,project,styleChoice(),chosenProposal&&chosenProposal.text===t?chosenProposal.lines:0);it.vi=t;resetProposals();msg.text='Đã áp dụng lời sửa, style và lưu file Photoshop.';});};
             function markDone(items){
                 var keys=[],i;for(i=0;i<items.length;i++){items[i].done=true;keys.push(items[i].key);}
                 rpc({operation:'review_mark',state:stateFile.fsName,keys:keys,status:'done'});
             }
             doneBtn.onClick=function(){guard(function(){var it=current();if(!it)return;var at=null;if(reviewDoc){try{reviewSave(reviewDoc);}catch(_){}}markDone([it]);refill();});};
             skipLook.onClick=function(){guard(function(){var rest=[],i;for(i=0;i<queue.items.length;i++)if(!queue.items[i].done&&queue.items[i].severity!=='fix')rest.push(queue.items[i]);if(!rest.length){msg.text='Không có mục "nên xem" nào.';return;}markDone(rest);refill();});};
-            refill();
+            refill();if(current())list.onChange();
             d.show();
             if(reviewDoc){try{reviewSave(reviewDoc);}catch(_){}}
         }
@@ -1162,8 +1259,8 @@
         };
         saveFonts.onClick = function () { run(function () {
             MTA.mkdir(fontSettingsFile.parent.fsName);
-            MTA.write(fontSettingsFile, MJSON.stringify({dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index], automatic:autoRoles.value}));
-            tick('Đã lưu ba font để dùng lần sau.');
+            MTA.write(fontSettingsFile, MJSON.stringify({dialogue:fontIds[font.selection.index], box:fontIds[boxFont.selection.index], shout:fontIds[shoutFont.selection.index], automatic:autoRoles.value,sizePolicy:options().sizePolicy,standardSize:Number(standardSize.text)}));
+            tick('Đã lưu font và cỡ chữ toàn truyện để dùng lần sau.');
         }); };
         sampleFonts.onClick = function () {
             var ids=['Itim-Regular','PatrickHand-Regular','Bangers-Regular'], present=[];
@@ -1674,6 +1771,7 @@
         var easyOutInfo=easyOutRow.add('statictext',undefined,'Kết quả sẽ lưu cạnh thư mục truyện (chưa chọn thư mục truyện)');easyOutInfo.characters=62;
         var easyNameRow=easyTab.add('group');easyNameRow.add('statictext',undefined,'Tên bộ truyện:');
         var easyName=easyNameRow.add('edittext',undefined,'');easyName.characters=30;
+        easyName.onChange=function(){selectSeriesByName(easyName.text);};
         easyNameRow.add('statictext',undefined,'Chế độ:');
         var easyMode=easyNameRow.add('dropdownlist',undefined,['Nhanh (khuyên dùng)','Chất lượng (kèm ảnh vùng thoại, tốn hơn)']);easyMode.selection=0;
         var easyEngineRow=easyTab.add('group');easyEngineRow.add('statictext',undefined,'Engine xoá chữ:');
@@ -1874,6 +1972,7 @@
             easyFolderInfo.text=f?f.fsName+' — '+n+' trang':'Chưa chọn thư mục';easyShowOut();
             if(f && (!easyName.text || easyName.text===easySuggestedName))easyName.text=decodeURI(f.name);
             easySuggestedName=f?decodeURI(f.name):'';
+            selectSeriesByName(f?easyName.text:'');
             if(f)easySay(n?'Đã chọn '+n+' trang. Bấm "Bắt đầu" khi sẵn sàng.':'Thư mục này không có ảnh JPG, PNG hoặc PSD.');
         }
         easyChoose.onClick=function(){
@@ -2006,7 +2105,8 @@
                     cancel:dir.fsName+'/cancel',progress:dir.fsName+'/progress.json',heavyPages:heavyPages,settings:{pdfLayers:(easyPdfKind.selection?easyPdfKind.selection.index:0)===0,
                     psd:easyKeepPsd.value===true,color:easyColor.selection?easyColor.selection.index:0,png:png.value,jpg:jpg.value,
                     dialogue:fontIds[font.selection.index],box:fontIds[boxFont.selection.index],shout:fontIds[shoutFont.selection.index],
-                    automatic:autoRoles.value,uppercase:uppercaseText.value,autoSize:autoSize.value,min:minSize.text,max:maxSize.text,
+                    automatic:autoRoles.value,uppercase:uppercaseText.value,autoSize:autoSize.value,sizePolicy:options().sizePolicy,standardSize:standardSize.text,min:minSize.text,max:maxSize.text,
+                    styleProfile:selectedStyleProfile()?MTAStyles.copy(selectedStyleProfile()):null,
                     autoLeading:leadingAuto.value,leading:leading.text,detail:detailChoice.selection.index,hardware:hwChoice.selection.index,
                     magi:magiOrder.value,koharu:koharuOrder.value,alreadyClean:alreadyClean.value}};
                 var jobFile=new File(dir.fsName+'/job.json');MTA.write(jobFile,MJSON.stringify(job));
@@ -2040,8 +2140,9 @@
                     // Photoshop. Clear cache before opening its first page too.
                     try{app.purge(PurgeTarget.ALLCACHES);}catch(_){} try{$.gc();}catch(_){}
                     var st=supervisedJob.settings;
+                    supervisedStyleProfile=st.styleProfile?MTAStyles.profile(st.styleProfile):null;
                     if(!chooseFontById(font,st.dialogue)||!chooseFontById(boxFont,st.box)||!chooseFontById(shoutFont,st.shout))throw Error('Thiếu font đã dùng cho lượt chạy.');
-                    autoRoles.value=st.automatic;uppercaseText.value=st.uppercase;autoSize.value=st.autoSize;
+                    autoRoles.value=st.automatic;uppercaseText.value=st.uppercase;autoSize.value=st.autoSize;sizePolicy.selection={adaptive:0,uniform:1,fixed:2}[st.sizePolicy||'adaptive'];standardSize.text=String(st.standardSize||18);
                     minSize.text=st.min;maxSize.text=st.max;leadingAuto.value=st.autoLeading;leading.text=st.leading;
                     detailChoice.selection=st.detail;hwChoice.selection=st.hardware;magiOrder.value=st.magi;koharuOrder.value=st.koharu;
                     alreadyClean.value=st.alreadyClean;lang.selection=lang.find('jpn_vert');rtl.value=true;

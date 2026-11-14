@@ -191,6 +191,8 @@ python manga_typesetter.py --accel cpu scan /duong/dan/anh --out /duong/dan/xuat
 
 Font comic mẫu và giấy phép: [assets/fonts](assets/fonts/README.md).
 
+**Style theo bộ truyện:** tạo preset riêng, nhập JSON style TypeR và chọn cách xuống dòng trong Rà soát nhanh. Xem [hướng dẫn style và xuống dòng](docs/runtime/lettering_styles.md).
+
 ## 7. Chọn phần cứng và tối ưu hiệu năng
 
 Dropdown **Tăng tốc** (tab Nguồn & nhận diện) được lưu cho các phiên sau. Tương đương CLI: `--accel` hoặc `MANGA_ACCEL`.
@@ -207,6 +209,10 @@ Hướng dẫn chọn nhanh: Mac và PC NVIDIA dùng `auto`. Chỉ chuyển `cpu
 Batch nhiều trang: script tự gọi `app.purge(PurgeTarget.ALLCACHES)` sau mỗi trang và dọn `work/jobs/` khi RPC thành công (chỉ giữ log khi lỗi). Chi tiết: [hardware và dispatch](docs/runtime/hardware.md).
 
 ## 8. Xuất file và dung lượng
+
+**Cỡ chữ toàn truyện** trong tab **3. Typeset & xuất** có ba chế độ: **Tự do theo bong bóng** (cơ chế cũ), **Đồng đều ±10%** (mặc định mới) và **Cố định tuyệt đối**. Chọn một cỡ chuẩn, mặc định 18 px trên trang chuẩn 1008×1440; ảnh 3024×4320 tự quy đổi thành 54 px để giữ tỷ lệ đọc. Chế độ đồng đều chỉ dùng 90–110% cỡ chuẩn, không phóng to câu ngắn để lấp bong bóng và không thay cỡ chuẩn theo từng trang. Chế độ cố định giữ đúng cỡ đó; câu không vừa cần rút gọn/chỉnh khung và được đánh dấu duyệt, không tự thu nhỏ. Khác font có thể có chiều cao nét nhìn khác nhau dù cùng cỡ: chọn cùng font cho các vai thoại nếu cần diện mạo đồng nhất.
+
+Bấm **Lưu font & cỡ** để dùng lại cỡ chuẩn cho các lần mở script/volume sau. Lượt chạy dài mới lưu lựa chọn vào job và phục hồi đúng khi restart; job cũ tiếp tục cơ chế cũ. Để đồng bộ PDF/PSD đã xuất, chọn chế độ/cỡ chuẩn rồi bấm **Sửa hàng loạt PDF/PSD: khung thoại + cỡ chữ + giãn dòng**. Kết quả và lỗi từng vùng nằm trong `SUA_THOAI/repair_log.json`; đổi cỡ chuẩn sẽ xuất lại thay vì bỏ qua checkpoint cũ.
 
 Lượt dịch mới dùng mặc định 6 câu ngữ cảnh nguồn thay vì 2 câu. Trước mỗi nhóm, tool bổ sung các cặp Nhật–Việt đã dịch ở những câu ngữ cảnh đó, chỉ lấy nhóm hoàn tất trước nhóm hiện tại và có revision nguồn còn khớp. Bản nháp được đánh dấu là chưa xác nhận, không biến thành chứng cứ về danh tính người nói. Ngữ cảnh bổ sung nằm trong giới hạn ký tự đầu vào; không gọi thêm API để rà văn phong. Prompt yêu cầu giữ xưng hô cho cùng quan hệ người nói–người nghe, kiểm tra nhịp đối đáp và giữ mức trang trọng theo cảnh. Có thể ghi quy tắc xưng hô đã xác nhận của từng cặp nhân vật trong **Quy tắc Việt hóa / Glossary**; không có đủ bằng chứng thì câu vẫn cần duyệt. Bộ rút gọn từ chối đề xuất đưa thêm từ xưng hô mới.
 

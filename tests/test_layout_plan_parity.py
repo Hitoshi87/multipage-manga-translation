@@ -33,6 +33,8 @@ def ellipse(cx, cy, rx, ry):
 
 
 CASES = [
+    {'shape': rect_shape([0, 0, 200, 180]), 'paragraphs': ['Cậu đang nói cái gì vậy hả tớ chẳng hiểu gì cả'],
+     'ref': 1.15, 'options': {'min': 10, 'max': 30, 'leading': 1.3, 'lineCount': 3}},
     {'shape': ellipse(150, 110, 95, 100), 'paragraphs': ['…và nói “Em yêu anh” đi.'],
      'ref': 1.26, 'options': {'min': 10, 'max': 60, 'leading': 1.05, 'accRatio': 1.0, 'capRatio': .7}},
     {'shape': ellipse(200, 150, 120, 90), 'paragraphs': ['Cậu đang nói cái gì vậy hả tớ chẳng hiểu gì cả'],

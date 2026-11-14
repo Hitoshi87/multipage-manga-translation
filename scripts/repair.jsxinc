@@ -127,7 +127,8 @@ var MTARepair=(function(){
             else if(layer.kind===LayerKind.TEXT && /B\d{3}\s*\|/.test(layer.name))layers.push(layer);
         }}
         collect(doc);
-        if(!layers.length && !(rules && !manifest.regions.length))throw Error('Không có layer thoại của tool; PDF có thể đã flatten.');
+        result.unchanged=!layers.length && (!manifest.regions.length || options.allowEmpty===true);
+        if(!layers.length && !result.unchanged)throw Error('Không có layer thoại của tool; PDF có thể đã flatten.');
         for(var i=0;i<layers.length;i++){
             var old=layers[i],id=old.name.match(/B\d{3}(?=\s*\|)/)[0],region=null,fit=null,replacement=null;
             if(tick && tick('Sửa khung thoại '+id)===false)throw Error('Đã hủy');
@@ -138,8 +139,12 @@ var MTARepair=(function(){
                 for(var j=0;j<manifest.regions.length;j++)if(manifest.regions[j].id===id)region=manifest.regions[j];
                 if(!region)throw Error('Không tìm thấy vùng thoại '+id);
                 var t=old.textItem,size=t.size.as('pt')*doc.resolution/72;
-                fit=MTA.addText(doc,old.parent,region,content,
-                    {font:t.font,min:Math.max(4,size*.5),max:Math.max(4,size),leading:1.3,autoLeading:true,caseMode:'keep',sparseBoost:1});
+                var fitOptions={font:t.font,min:Math.max(4,size*.5),max:Math.max(4,size),leading:1.3,autoLeading:true,caseMode:'keep',sparseBoost:1};
+                if(options.sizing && options.sizing.sizePolicy!=='adaptive'){
+                    fitOptions.sizePolicy=options.sizing.sizePolicy;fitOptions.standardSize=options.sizing.standardSize;
+                    fitOptions=MTA.letteringSizeOptions(fitOptions,Math.max(1,Math.min(doc.width.as('px')/1008,doc.height.as('px')/1440)));
+                }
+                fit=MTA.addText(doc,old.parent,region,content,fitOptions);
                 // Retain the original colour, layer effects, visibility and opacity.
                 replacement=old.duplicate();var dest=replacement.textItem,src=fit.textItem;
                 dest.kind=TextType.PARAGRAPHTEXT;dest.size=src.size;
@@ -167,6 +172,7 @@ var MTARepair=(function(){
     }
     function runFolder(folder,tick,options){
         options=options||{};var rules=options.names?nameRules(options.names):null;
+        if(options.sizing)MTA.letteringSizeOptions({min:4,max:250,sizePolicy:options.sizing.sizePolicy,standardSize:options.sizing.standardSize},1);
         if(rules && !rules.length && !(options.stripHonorifics && options.allNames))throw Error('Hãy nhập ít nhất một cặp tên hoặc bật bỏ kính ngữ mọi tên.');
         var items=inventory(folder),out=MTA.mkdir(folder.fsName+(rules?'/DOI_TEN':'/SUA_THOAI')),
             logFile=new File(out.fsName+(rules?'/rename_log.json':'/repair_log.json'));
@@ -175,6 +181,8 @@ var MTARepair=(function(){
         if(prior && MJSON.stringify(prior.names||null)!==MJSON.stringify(rules))prior=null;
         if(prior && !!prior.stripHonorifics!==log.stripHonorifics)prior=null;
         if(prior && !!prior.allNames!==log.allNames)prior=null;
+        log.sizing=options.sizing||null;
+        if(prior && MJSON.stringify(prior.sizing||null)!==MJSON.stringify(log.sizing))prior=null;
         if(prior && prior.revision===log.revision)log.pages=prior.pages.slice(0);
         function record(row){
             for(var r=0;r<log.pages.length;r++)if(log.pages[r].input===row.input){log.pages[r]=row;return;}
@@ -196,10 +204,10 @@ var MTARepair=(function(){
                         if(openPath===file.fsName)throw Error('File đang mở trong Photoshop; đóng file rồi chạy lại để sửa trang này.');
                     }
                     var manifest=MJSON.parse(MTA.read(new File(item.page.manifest)));
-                    doc=app.open(file);var result=repairDocument(doc,manifest,tick,{names:rules,stripHonorifics:options.stripHonorifics===true,allNames:options.allNames===true});
+                    doc=app.open(file);var result=repairDocument(doc,manifest,tick,{names:rules,stripHonorifics:options.stripHonorifics===true,allNames:options.allNames===true,sizing:options.sizing,allowEmpty:item.page.required===0});
                     row.fixed=result.fixed;row.errors=result.errors;row.replacements=result.replacements;row.counts=result.counts;
                     row.honorifics=result.honorifics;row.trimmed=result.trimmed;
-                    if(!result.fixed && (!rules || result.errors.length))throw Error('Không sửa được thoại nào; xem lỗi vùng trong log.');
+                    if(!result.fixed && ((!rules && !result.unchanged) || result.errors.length))throw Error('Không sửa được thoại nào; xem lỗi vùng trong log.');
                     if(!result.fixed){
                         doc.close(SaveOptions.DONOTSAVECHANGES);doc=null;
                         var target=new File(out.fsName+'/'+file.name),suffix=1;

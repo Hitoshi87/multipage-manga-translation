@@ -30,7 +30,7 @@ FILES = (
     'tests/fixtures/honorific_cases.json',
 )
 SCRIPTS = (
-    'core.jsxinc', 'repair.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
+    'core.jsxinc', 'lettering_styles.jsxinc', 'style_manager.jsxinc', 'repair.jsxinc', 'json.jsxinc', 'download_models.py', 'build_source_bundle.py',
     'clean_generated.py', 'compact_png_cache.py', 'setup_ai.py', 'setup_aot.py', 'setup_assist_models.py',
     'setup_heavy_assist.py', 'setup_preview_models.py',
     'audit_fill_color.py', 'bubble_crop_compare.py', 'bubble_decision_trace.py', 'benchmark_ocr.py',

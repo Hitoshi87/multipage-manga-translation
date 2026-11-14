@@ -1,0 +1,103 @@
+/* Series lettering profiles. ES3-compatible; no Photoshop or TypeR runtime dependency. */
+var MTAStyles = (function () {
+    var roles=['dialogue','box','shout'];
+    function copy(o){return MJSON.parse(MJSON.stringify(o));}
+    function trim(s){return String(s||'').replace(/^\s+|\s+$/g,'');}
+    function number(v,low,high,label){
+        if(typeof v!=='number'||!isFinite(v)||v<low||v>high)throw Error(label+' không hợp lệ.');
+        return v;
+    }
+    function rgb(v){
+        if(!v || !(v instanceof Array) || v.length!==3)throw Error('Màu cần ba số RGB.');
+        return [number(v[0],0,255,'RGB'),number(v[1],0,255,'RGB'),number(v[2],0,255,'RGB')];
+    }
+    function color(v){return rgb([v.red!==undefined?v.red:v.r,v.green!==undefined?v.green:v.g,v.blue!==undefined?v.blue:v.b]);}
+    function style(s){
+        if(!s || !trim(s.id) || !trim(s.name) || !trim(s.font))throw Error('Style cần ID, tên và PostScript font.');
+        var out={id:trim(s.id),name:trim(s.name),font:trim(s.font),size:number(s.size,1,1000,'Cỡ chữ'),unit:s.unit||'px',
+            color:rgb(s.color||[0,0,0]),leading:number(s.leading===undefined?1.3:s.leading,1,2.5,'Giãn dòng'),
+            tracking:number(s.tracking===undefined?0:s.tracking,-100,1000,'Tracking'),bold:s.bold===true,italic:s.italic===true,prefixes:[]};
+        if(out.unit!=='px'&&out.unit!=='pt')throw Error('Đơn vị cỡ chữ cần px hoặc pt.');
+        if(s.prefixes!==undefined && !(s.prefixes instanceof Array))throw Error('Tiền tố style không hợp lệ.');
+        for(var i=0;i<(s.prefixes||[]).length;i++){
+            if(typeof s.prefixes[i]!=='string')throw Error('Tiền tố cần là chuỗi.');
+            var p=trim(s.prefixes[i]);if(p)out.prefixes.push(p);
+        }
+        if(s.stroke && s.stroke.enabled!==false && s.stroke.size>0)out.stroke={size:number(s.stroke.size,0,50,'Viền chữ'),color:rgb(s.stroke.color||[255,255,255])};
+        return out;
+    }
+    function profile(p){
+        if(!p || !trim(p.id) || !trim(p.name) || !(p.styles instanceof Array) || p.styles.length>500)throw Error('Bộ style không hợp lệ (tối đa 500 style).');
+        var out={id:trim(p.id),name:trim(p.name),styles:[],roles:{}},ids={},i,s;
+        for(i=0;i<p.styles.length;i++){s=style(p.styles[i]);if(ids['$'+s.id])throw Error('ID style bị lặp: '+s.id);ids['$'+s.id]=true;out.styles.push(s);}
+        for(i=0;i<roles.length;i++){var id=p.roles&&p.roles[roles[i]];if(id){if(!ids['$'+id])throw Error('Vai trò tham chiếu style không tồn tại.');out.roles[roles[i]]=id;}}
+        return out;
+    }
+    function library(data){
+        if(!data || data.schema!==1 || !(data.profiles instanceof Array))throw Error('Thư viện style không hợp lệ.');
+        var out={schema:1,profiles:[]},ids={},names={};
+        for(var i=0;i<data.profiles.length;i++){var p=profile(data.profiles[i]);if(ids['$'+p.id]||names['$'+p.name.toLowerCase()])throw Error('Bộ truyện bị lặp.');ids['$'+p.id]=true;names['$'+p.name.toLowerCase()]=true;out.profiles.push(p);}
+        return out;
+    }
+    function find(p,id){for(var i=0;p&&i<p.styles.length;i++)if(p.styles[i].id===id)return p.styles[i];return null;}
+    function missingFonts(p,fonts){var out=[],seen={};for(var i=0;i<p.styles.length;i++){var font=p.styles[i].font,found=false;for(var j=0;j<fonts.length;j++)if(font===fonts[j])found=true;if(!found&&!seen['$'+font]){out.push(font);seen['$'+font]=true;}}return out;}
+    function defaults(name,id,options){
+        var p={id:id,name:name,styles:[],roles:{}};
+        for(var i=0;i<roles.length;i++){var role=roles[i];p.styles.push(style({id:role,name:['Thoại thường','Dẫn chuyện','Hét'][i],font:options.fonts[role],size:options.standardSize||18}));p.roles[role]=role;}
+        return p;
+    }
+    // Imports TypeR library exports and single-folder exports. Only supported
+    // typography is mapped; host descriptors are never executed or copied blindly.
+    function importTypeR(data,stamp){
+        if(data && data.schema===1 && data.styles && data.roles){var nativeProfile=profile(data);return {styles:nativeProfile.styles,warnings:[],roles:nativeProfile.roles};}
+        var input=data&&(data.styles||data.exportedStyles);
+        if(!(input instanceof Array)||!input.length||input.length>500)throw Error('Chọn JSON xuất thư viện hoặc thư mục style của TypeR (1–500 style).');
+        var out=[],warnings=[],i;
+        for(i=0;i<input.length;i++){
+            var source=input[i],props=source&&source.textProps,layer=props&&props.layerText;
+            var ranges=layer&&layer.textStyleRange,paragraphs=layer&&layer.paragraphStyleRange;
+            var t=ranges&&ranges[0]&&ranges[0].textStyle,par=paragraphs&&paragraphs[0]&&paragraphs[0].paragraphStyle;
+            if(!t || !t.fontPostScriptName)throw Error('Style '+(source&&source.name||i+1)+' thiếu textProps.layerText hoặc PostScript font.');
+            function scalar(v){return v&&typeof v==='object'?v._value:v;}
+            var size=scalar(t.size!==undefined?t.size:t.impliedFontSize),unit=(t.size&&t.size._unit)||props.typeUnit||'pointsUnit';
+            if(unit!=='pointsUnit'&&unit!=='pixelsUnit'&&unit!=='pt'&&unit!=='px')throw Error('Đơn vị TypeR chưa hỗ trợ: '+unit);
+            var lead=t.autoLeading===true?0:scalar(t.leading),ratio=lead?lead/size:(par&&par.autoLeadingPercentage||1.3);
+            if(ratio<1||ratio>2.5){warnings.push(source.name+': giãn dòng ngoài 1–2.5; dùng 1.3.');ratio=1.3;}
+            var s={id:'import_'+stamp+'_'+i,name:trim(source.name)||'Style '+(i+1),font:t.fontPostScriptName,size:size,unit:/^(pixelsUnit|px)$/.test(unit)?'px':'pt',
+                color:t.color?color(t.color):[0,0,0],leading:ratio,tracking:t.tracking===undefined?0:t.tracking,
+                bold:t.syntheticBold===true,italic:t.syntheticItalic===true,prefixes:source.prefixesDisabled?[]:(source.prefixes||[])};
+            if(source.stroke&&source.stroke.enabled!==false&&source.stroke.size>0)s.stroke={size:source.stroke.size,color:color(source.stroke.color||{r:255,g:255,b:255})};
+            out.push(style(s));
+            if(ranges.length>1 || source.autoSizeByPageWidth || source.punctuationOnlyScale>1 || (t.horizontalScale!==undefined&&t.horizontalScale!==100) ||
+               (t.verticalScale!==undefined&&t.verticalScale!==100) || t.baselineShift || t.underline&&t.underline!=='underlineOff' || t.strikethrough&&t.strikethrough!=='strikethroughOff' ||
+               source.stroke&&(source.stroke.position&&source.stroke.position!=='outer'||source.stroke.opacity!==undefined&&source.stroke.opacity!==100))
+                warnings.push(s.name+': bỏ qua scale/baseline/trang trí, nhiều text run, viền đặc biệt hoặc quy tắc cỡ nâng cao.');
+        }
+        warnings.push('Nhập font, cỡ, RGB, giãn dòng, tracking, đậm/nghiêng giả, tiền tố và viền ngoài. Căn giữa và khung chữ ngang do bộ dàn chữ quản lý; các thuộc tính TypeR khác không được nhập.');
+        return {styles:out,warnings:warnings};
+    }
+    function resolve(p,text,role,explicit){
+        var selected=explicit?find(p,explicit):null,prefix='',i,j;
+        if(explicit&&!selected)throw Error('Style đã chọn không còn tồn tại.');
+        for(i=0;p&&i<p.styles.length;i++)for(j=0;j<p.styles[i].prefixes.length;j++){
+            var candidate=p.styles[i].prefixes[j];
+            if(text.substr(0,candidate.length)===candidate && candidate.length>prefix.length){if(!explicit)selected=p.styles[i];prefix=candidate;}
+        }
+        if(!selected)selected=find(p,p&&p.roles[role]);
+        return {style:selected,text:prefix?trim(text.substr(prefix.length)):text};
+    }
+    function prepare(options,region,text,resolution){
+        var out={},k;for(k in options)out[k]=options[k];
+        if(!options.styleProfile)return {options:out,text:text};
+        var result=resolve(options.styleProfile,text,options.fontRole||'dialogue',options.styleId),s=result.style;
+        if(s){
+            out.font=s.font;out.textColor=s.color;out.tracking=s.tracking;out.fauxBold=s.bold;out.fauxItalic=s.italic;
+            out.leading=s.leading;out.autoLeading=false;out.styleStroke=s.stroke||null;out.appliedStyleId=s.id;
+            var size=s.size*(s.unit==='pt'?resolution/72:(options.styleScale||1));
+            out.targetSize=size;out.max=size;out.min=size*(options.sizePolicy==='fixed'?1:options.sizePolicy==='uniform'?.9:.75);
+            out.sparseBoost=1;out.maxCap=size;
+        }
+        return {options:out,text:result.text};
+    }
+    return {copy:copy,style:style,profile:profile,library:library,find:find,defaults:defaults,missingFonts:missingFonts,importTypeR:importTypeR,resolve:resolve,prepare:prepare};
+})();

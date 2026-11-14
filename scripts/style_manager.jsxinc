@@ -1,0 +1,77 @@
+/* ScriptUI editor; edits a copy and commits only through the Save callback. */
+var MTAStyleUI = (function () {
+    function edit(initial,env){
+        var p=MTAStyles.copy(initial),selected=-1,result=null;
+        var d=new Window('dialog','Style theo bộ truyện');d.orientation='column';d.alignChildren='fill';
+        var title=d.add('group');title.add('statictext',undefined,'Tên bộ truyện:');
+        var series=title.add('edittext',undefined,p.name);series.characters=40;
+        var io=d.add('group'),importBtn=io.add('button',undefined,'Nhập JSON TypeR / bộ style'),exportBtn=io.add('button',undefined,'Xuất JSON');
+        var body=d.add('group');body.alignChildren='top';
+        var list=body.add('listbox',undefined,[]);list.preferredSize=[210,290];
+        var fields=body.add('group');fields.orientation='column';fields.alignChildren='fill';
+        function field(label,value,width){var row=fields.add('group');row.add('statictext',undefined,label);var c=row.add('edittext',undefined,value);c.characters=width||10;return c;}
+        var name=field('Tên style:','',28),fontRow=fields.add('group');fontRow.add('statictext',undefined,'Font:');
+        var font=fontRow.add('dropdownlist',undefined,env.fontNames);font.preferredSize.width=270;
+        var fontNote=fields.add('statictext',undefined,'');fontNote.characters=42;
+        var sizes=fields.add('group');sizes.add('statictext',undefined,'Cỡ:');var size=sizes.add('edittext',undefined,'18');size.characters=6;
+        var unit=sizes.add('dropdownlist',undefined,['px','pt']);unit.selection=0;
+        var leading=field('Giãn dòng (1–2.5):','1.3'),tracking=field('Tracking (−100–1000):','0');
+        var color=field('Màu RGB:','0, 0, 0',20),prefix=field('Tiền tố (cách bằng |):','',28);
+        var flags=fields.add('group'),bold=flags.add('checkbox',undefined,'Đậm giả'),italic=flags.add('checkbox',undefined,'Nghiêng giả');
+        var stroke=field('Viền ngoài (px, 0 = tắt):','0'),strokeColor=field('Màu viền RGB:','255, 255, 255',20);
+        var tools=d.add('group'),add=tools.add('button',undefined,'Thêm style'),remove=tools.add('button',undefined,'Xóa style');
+        var roleControls={},roles=['dialogue','box','shout'];
+        var roleRow=d.add('group');
+        for(var r=0;r<roles.length;r++){roleRow.add('statictext',undefined,['Thoại:','Dẫn chuyện:','Hét:'][r]);roleControls[roles[r]]=roleRow.add('dropdownlist',undefined,[]);roleControls[roles[r]].preferredSize.width=135;}
+        d.add('statictext',undefined,'px tự tăng theo kích thước trang chuẩn 1008×1440; pt theo DPI tài liệu.');
+        d.add('statictext',undefined,'Tiền tố phải gồm dấu phân cách, ví dụ REG: hoặc SFX:. Style dùng căn giữa, chữ ngang.');
+        var message=d.add('statictext',undefined,'',{multiline:true});message.preferredSize=[650,58];
+        var buttons=d.add('group');buttons.alignment='right';var save=buttons.add('button',undefined,'Lưu bộ style');buttons.add('button',undefined,'Hủy',{name:'cancel'});
+        function rgb(text){var a=text.split(','),out=[];for(var i=0;i<a.length;i++)out.push(Number(a[i]));return out;}
+        function commit(){
+            if(selected<0)return;
+            var old=p.styles[selected],fontId=font.selection?env.fontIds[font.selection.index]:old.font;
+            p.styles[selected]=MTAStyles.style({id:old.id,name:name.text,font:fontId,size:Number(size.text),unit:unit.selection.text,
+                color:rgb(color.text),leading:Number(leading.text),tracking:Number(tracking.text),bold:bold.value,italic:italic.value,
+                prefixes:prefix.text?prefix.text.split('|'):[],stroke:{size:Number(stroke.text),color:rgb(strokeColor.text)}});
+            if(!isFinite(Number(stroke.text))||Number(stroke.text)<0||Number(stroke.text)>50)throw Error('Viền cần từ 0 đến 50 px.');
+        }
+        function rememberRoles(){for(var r=0;r<roles.length;r++){var c=roleControls[roles[r]];p.roles[roles[r]]=c.selection&&c.selection.index>0?p.styles[c.selection.index-1].id:null;}}
+        function showStyle(index){
+            selected=index;var s=p.styles[index];if(!s)return;
+            name.text=s.name;size.text=String(s.size);unit.selection=s.unit==='pt'?1:0;leading.text=String(s.leading);tracking.text=String(s.tracking);
+            color.text=s.color.join(', ');prefix.text=s.prefixes.join(' | ');bold.value=s.bold;italic.value=s.italic;
+            stroke.text=String(s.stroke?s.stroke.size:0);strokeColor.text=(s.stroke?s.stroke.color:[255,255,255]).join(', ');
+            font.selection=null;for(var i=0;i<env.fontIds.length;i++)if(env.fontIds[i]===s.font)font.selection=i;
+            fontNote.text=font.selection?'':'Chưa cài: '+s.font+' — chọn font thay thế hoặc cài font.';
+        }
+        var filling=false;
+        function refill(index){
+            filling=true;list.removeAll();for(var i=0;i<p.styles.length;i++)list.add('item',p.styles[i].name);
+            for(var r=0;r<roles.length;r++){var c=roleControls[roles[r]];c.removeAll();c.add('item','Theo cấu hình');c.selection=0;
+                for(i=0;i<p.styles.length;i++){c.add('item',p.styles[i].name);if(p.roles[roles[r]]===p.styles[i].id)c.selection=i+1;}}
+            list.selection=Math.max(0,Math.min(index,p.styles.length-1));filling=false;showStyle(list.selection.index);
+        }
+        function guard(fn){try{fn();}catch(e){message.text=String(e.message||e);}}
+        list.onChange=function(){if(filling||!list.selection)return;var next=list.selection.index;guard(function(){commit();if(selected>=0)list.items[selected].text=p.styles[selected].name;showStyle(next);});if(selected!==next){filling=true;list.selection=selected;filling=false;}};
+        font.onChange=function(){if(font.selection)fontNote.text='';};
+        add.onClick=function(){guard(function(){commit();rememberRoles();var s=MTAStyles.copy(p.styles[selected]);s.id='style_'+env.unique();s.name='Style mới';s.prefixes=[];p.styles.push(s);refill(p.styles.length-1);});};
+        remove.onClick=function(){guard(function(){if(p.styles.length===1)throw Error('Giữ ít nhất một style.');rememberRoles();var id=p.styles[selected].id;p.styles.splice(selected,1);for(var r=0;r<roles.length;r++)if(p.roles[roles[r]]===id)p.roles[roles[r]]=null;refill(0);});};
+        importBtn.onClick=function(){guard(function(){
+            commit();rememberRoles();var file=File.openDialog('Chọn JSON xuất từ TypeR hoặc bộ style');if(!file)return;
+            if(file.length>2*1024*1024)throw Error('JSON vượt 2 MiB. Hãy xuất riêng thư mục style.');
+            var imported=MTAStyles.importTypeR(MJSON.parse(MTA.read(file)),env.unique()),start=p.styles.length;
+            if(start+imported.styles.length>500)throw Error('Một bộ truyện chỉ chứa tối đa 500 style.');
+            // Fresh IDs also avoid collisions when importing the same native profile twice.
+            var idMap={};for(var i=0;i<imported.styles.length;i++){var s=imported.styles[i],id='style_'+env.unique();idMap['$'+s.id]=id;s.id=id;p.styles.push(s);}
+            if(imported.roles)for(var r=0;r<roles.length;r++)if(imported.roles[roles[r]])p.roles[roles[r]]=idMap['$'+imported.roles[roles[r]]];
+            refill(start);var missing=MTAStyles.missingFonts(p,env.fontIds);
+            message.text='Đã nhập '+imported.styles.length+' style. Chọn style cho Thoại / Dẫn chuyện / Hét rồi Lưu.';
+            alert(message.text+'\n'+(missing.length?'Font chưa cài: '+missing.join(', ')+'\n':'')+imported.warnings.join('\n'));
+        });};
+        exportBtn.onClick=function(){guard(function(){commit();rememberRoles();p.name=series.text;var out=MTAStyles.profile(p),file=File.saveDialog('Xuất bộ style JSON');if(file)MTA.write(file,MJSON.stringify({schema:1,id:out.id,name:out.name,styles:out.styles,roles:out.roles}));message.text='Đã xuất bộ style.';});};
+        save.onClick=function(){guard(function(){commit();rememberRoles();p.name=series.text;p=MTAStyles.profile(p);env.save(p);result=p;d.close(1);});};
+        refill(0);d.show();return result;
+    }
+    return {edit:edit};
+})();

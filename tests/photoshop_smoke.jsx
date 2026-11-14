@@ -86,6 +86,15 @@
         if(shortened.fixed!==1 || shortened.honorifics!==1 || shortened.trimmed!==1 || shortened.errors.length)
             throw Error('Honorific or full-name cleanup failed: '+MJSON.stringify(shortened));
         report.checks.push('Configured-name honorific cleanup and full-name shortening');
+        var fixedGroup=reopened.layerSets.add(),fixedOptions=MTA.letteringSizeOptions(
+            {font:'ArialMT',min:4,max:90,sizePolicy:'fixed',standardSize:18,leading:1.3,autoLeading:true},1);
+        for(var fixedIndex=0;fixedIndex<2;fixedIndex++){
+            var fixedLayer=MTA.addText(reopened,fixedGroup,{id:'FIXED'+fixedIndex,safe:[20+fixedIndex*250,20,200+fixedIndex*100,200]},'Chờ tôi.',fixedOptions);
+            if(Math.abs(fixedLayer.textItem.size.as('pt')*reopened.resolution/72-18)>.01)
+                throw Error('Fixed font size changed between bubbles');
+        }
+        fixedGroup.remove();
+        report.checks.push('Global fixed font size stays identical across different bubble dimensions');
         var longTextRejected = false, beforeLayers = textGroup.artLayers.length;
         try { MTA.addText(reopened, textGroup, {id: 'TOO_LONG', safe: [10, 10, 20, 20]},
                          'Đây là câu quá dài không thể nằm trong vùng rất nhỏ', {font: 'ArialMT', min: 14, max: 38, leading: 1.15}); }

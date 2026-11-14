@@ -13,10 +13,11 @@ assert.throws(()=>ctx.MTARepair.inventory({getFiles:()=>[]}),/checkpoint/);
 console.log('Bulk repair inventory follows latest checkpoint and excludes obsolete PDFs PASS');
 const source=fs.readFileSync('Photoshop_Typeset.jsx','utf8');let invoked=0,notice='';
 let options;
-const ui={repairExisting:{},renameNames:{},Folder:{selectDialog:()=>folder},run:fn=>fn(),tick:()=>true,
+const ui={repairExisting:{},renameNames:{},Folder:{selectDialog:()=>folder},run:fn=>fn(),tick:()=>true,options:()=>({sizePolicy:'uniform',standardSize:18}),
   MTARepair:{runFolder(f,t,o){assert.strictEqual(f,folder);invoked++;options=o;return {folder:{fsName:'/out/SUA_THOAI'},log:{pages:[{status:'complete',replacements:o?2:0}]}};}},alert:s=>notice=s};
 vm.createContext(ui);vm.runInContext(source.slice(source.indexOf('        repairExisting.onClick='),source.indexOf('        var activeTaskDialog=')),ui);
 ui.repairExisting.onClick();assert.strictEqual(invoked,1);assert(notice.includes('Đã sửa 1 file'));
+assert.strictEqual(options.sizing.standardSize,18);
 console.log('Main script invokes bulk repair once per click PASS');
 ui.chooseNameRules=()=>[{from:'Ajisawa',to:'Shinjuku'}];ui.renameNames.onClick();
 assert.strictEqual(invoked,2);assert.strictEqual(options.names[0].to,'Shinjuku');assert(notice.includes('đổi 2 lượt tên'));
@@ -24,3 +25,6 @@ console.log('Main script invokes name replacement with selected rules PASS');
 ui.chooseNameRules=()=>({names:[{from:'Shinjuku',to:'Shinjuku',dropAfter:'Takumi'}],stripHonorifics:true});
 ui.renameNames.onClick();assert.strictEqual(options.stripHonorifics,true);assert.strictEqual(options.names[0].dropAfter,'Takumi');
 console.log('Main script passes honorific and tail-shortening settings PASS');
+const emptyDoc={width:{as:()=>100},height:{as:()=>100},layers:[]};
+assert.strictEqual(ctx.MTARepair.repairDocument(emptyDoc,{width:100,height:100,regions:[]}).unchanged,true);
+assert.throws(()=>ctx.MTARepair.repairDocument(emptyDoc,{width:100,height:100,regions:[{id:'B001'}]}),/flatten/);

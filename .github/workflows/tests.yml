@@ -28,6 +28,7 @@ jobs:
       - run: node tests/test_windows_launcher.js
       - run: node tests/test_engine_review_ui.js
       - run: node tests/test_ui_modes.js
+      - run: node tests/test_series_styles.js && node tests/test_style_manager_ui.js && node tests/test_review_lettering.js && node tests/test_review_style_ui.js
       - run: node tests/chapter_dialog.js
       - run: python scripts/build_source_bundle.py --check
       - run: node tests/test_native_smoke.js
@@ -38,3 +39,7 @@ jobs:
           python -m unittest discover -s tests -q
           node tests/test_engine_review_ui.js
           node tests/test_ui_modes.js
+          node tests/test_series_styles.js
+          node tests/test_style_manager_ui.js
+          node tests/test_review_lettering.js
+          node tests/test_review_style_ui.js

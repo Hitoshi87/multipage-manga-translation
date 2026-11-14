@@ -250,7 +250,7 @@ var MTA = (function () {
         var b = layer.bounds;
         return [b[0].as('px'), b[1].as('px'), b[2].as('px'), b[3].as('px')];
     }
-    function addWhiteStroke(doc, layer, pixels) {
+    function addWhiteStroke(doc, layer, pixels, rgb) {
         // New text layers only; preserves editable text. If this Photoshop
         // version rejects layer effects, the caller records a review issue.
         try {
@@ -266,7 +266,8 @@ var MTA = (function () {
             stroke.putEnumerated(id('Md  '),id('BlnM'),id('Nrml'));
             stroke.putUnitDouble(id('Opct'),id('#Prc'),100);
             stroke.putUnitDouble(id('Sz  '),id('#Pxl'),pixels);
-            color.putDouble(id('Rd  '),255);color.putDouble(id('Grn '),255);color.putDouble(id('Bl  '),255);
+            rgb=rgb||[255,255,255];
+            color.putDouble(id('Rd  '),rgb[0]);color.putDouble(id('Grn '),rgb[1]);color.putDouble(id('Bl  '),rgb[2]);
             stroke.putObject(id('Clr '),id('RGBC'),color);effects.putObject(id('FrFX'),id('FrFX'),stroke);
             action.putObject(id('T   '),id('Lefx'),effects);executeAction(id('setd'),action,DialogModes.NO);
             return true;
@@ -337,6 +338,7 @@ var MTA = (function () {
             for(var s=0;s<shifts.length;s++){
                 var best=null;
                 for(var n=nmin;n<=Math.min(maxLines,nmin+Math.max(4,Math.ceil(nmin*.6)));n++){
+                    if(o.lineCount && n!==o.lineCount)continue;
                     var c=tryAt(size,n,shifts[s]);
                     if(c && (!best||c.quality<best.quality))best=c;
                 }
@@ -376,6 +378,20 @@ var MTA = (function () {
         return Math.max(minSize,factor*sorted[Math.floor((sorted.length-1)/2)]);
     }
     var lastLayoutInfo=null, fontMetricCache={}, fontMetricKeys=[];
+    function letteringSizeOptions(options,scale){
+        var out={},key;for(key in options)out[key]=options[key];
+        scale=scale===undefined?1:scale;
+        var policy=options.sizePolicy||'adaptive';
+        if(policy!=='adaptive' && policy!=='uniform' && policy!=='fixed')throw Error('Chế độ cỡ chữ không hợp lệ.');
+        out.sizePolicy=policy;
+        if(policy==='adaptive'){out.min*=scale;out.max*=scale;return out;}
+        var standard=Number(options.standardSize);
+        if(!(standard>=4 && standard<=250 && isFinite(standard) && scale>0 && isFinite(scale)))throw Error('Cỡ chữ toàn truyện cần từ 4 đến 250.');
+        out.targetSize=standard*scale;out.autoSize=false;out.sparseBoost=1;
+        out.min=out.targetSize*(policy==='uniform'?.9:1);
+        out.max=out.targetSize*(policy==='uniform'?1.1:1);out.maxCap=out.max;
+        return out;
+    }
     function readableLeading(options, inkRatio) {
         return Math.max(Number(options.leading)||1.3, (Number(inkRatio)||1.15)+.10,
                         options.autoLeading===true?1.3:1);
@@ -439,6 +455,11 @@ var MTA = (function () {
     }
     function addText(doc, group, region, translation, options) {
         lastLayoutInfo=null;
+        var sourceText=translation;
+        if(typeof MTAStyles!=='undefined'){
+            var styled=MTAStyles.prepare(options,region,translation,doc.resolution);
+            options=styled.options;translation=styled.text;
+        }
         // Case affects only the rendered text layer, never the saved translation.
         translation = normalizeText(translation, options.uppercase === true ? 'upper' : (options.caseMode || 'sentence'));
         var shape = region.shape && !region.safe_limit ? region.shape : null;
@@ -453,11 +474,13 @@ var MTA = (function () {
             t.kind = TextType.POINTTEXT;
             normalHorizontalText(t);
             t.font = options.font;
+            if(String(t.font)!==options.font)throw Error('Photoshop thay thế font bị thiếu: '+options.font);
+            t.tracking=options.tracking||0;t.fauxBold=options.fauxBold===true;t.fauxItalic=options.fauxItalic===true;
             t.justification = Justification.CENTER;
             t.position = [UnitValue(doc.width.as('px')/2, 'px'), UnitValue(doc.height.as('px')/2, 'px')];
             t.useAutoLeading = false;
             t.antiAliasMethod = AntiAlias.SHARP;
-            var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
+            var rgb=options.textColor||[0,0,0],color = new SolidColor(); color.rgb.red = rgb[0]; color.rgb.green = rgb[1]; color.rgb.blue = rgb[2]; t.color = color;
             var maxW = box[2] - 4, maxH = box[3] - 4;
             function measure(content) {
                 t.contents = content || ' '; var b = bounds(layer);
@@ -465,7 +488,7 @@ var MTA = (function () {
             }
             var refSize=100;
             t.size=UnitValue(refSize*72/doc.resolution,'pt');
-            var metricKey='$'+options.font+'@'+doc.resolution+'@'+String(t.capitalization)+'@'+t.fauxBold+'@'+t.fauxItalic,
+            var metricKey='$'+options.font+'@'+doc.resolution+'@'+String(t.capitalization)+'@'+t.fauxBold+'@'+t.fauxItalic+'@'+t.tracking,
                 metrics=fontMetricCache[metricKey];
             if(!metrics){
                 metrics={words:{},count:0,space:(measure('a a')[0]-measure('aa')[0])/refSize,ink:measure('ẤỮộgj')[1]/refSize};
@@ -492,7 +515,7 @@ var MTA = (function () {
             // Planning is pure arithmetic on cached widths; Photoshop only
             // verifies the result, and the size shrinks if real metrics disagree.
             for(var tries=0;tries<14;tries++){
-                var plan=planLayout(layoutShape,paragraphs,unitWidth,refRatio,{min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12});
+                var plan=planLayout(layoutShape,paragraphs,unitWidth,refRatio,{min:options.min,max:cap,leading:lead.ratio,accRatio:accRatio,capRatio:capRatio,sparseFill:.18,sparseBoost:options.sparseBoost||1.12,lineCount:options.lineCount});
                 if(!plan)break;
                 // The sizing pass only chooses a page cap; the final pass
                 // verifies actual Photoshop bounds once for every kept layer.
@@ -521,9 +544,9 @@ var MTA = (function () {
                 if(ok){best=plan;break;}
                 cap=plan.size*.97;if(cap<options.min)break;
             }
-            if (!best) throw Error(region.id + ': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.');
+            if (!best) throw Error(region.id + (options.sizePolicy==='fixed'?': không vừa cỡ cố định; cần rút gọn hoặc chỉnh khung.':': bản dịch không vừa cỡ nhỏ nhất. Rút gọn hoặc sửa mapping/cỡ chữ.'));
             best.content=best.lines.join('\r');
-            lastLayoutInfo={id:region.id,size:best.size,fill:best.fill,lines:best.lines.length};
+            lastLayoutInfo={id:region.id,size:best.size,fill:best.fill,lines:best.lines.length,content:best.lines.join('\n'),sourceText:sourceText,styleId:options.appliedStyleId||null,sizePolicy:options.sizePolicy||'adaptive',targetSize:options.targetSize||null};
             if(options.dryRun){layer.remove();return null;}
             var actual = bounds(layer);
             if (actual[0] < box[0] - .5 || actual[1] < box[1] - .5 ||
@@ -534,10 +557,51 @@ var MTA = (function () {
             });
             t.contents=best.content;
             if(!groupedFit)throw Error(region.id + ': chữ vượt biên bubble sau khi nhóm layer');
+            if(options.styleStroke){
+                var strokePixels=options.styleStroke.size*(options.styleScale||1);
+                // Reserve the visible outer stroke as well as the glyph ink.
+                var strokeFits=placedLinesFit(layoutShape,best.lines,best.lead,function(line){
+                    t.contents=line;var b=bounds(layer);return [b[0]-strokePixels,b[1]-strokePixels,b[2]+strokePixels,b[3]+strokePixels];
+                });t.contents=best.content;
+                if(!strokeFits)throw Error(region.id+': viền chữ vượt vùng an toàn; giảm cỡ hoặc độ dày viền.');
+            }
             paragraphText(layer,box,best.size,doc.resolution);
+            if(options.styleStroke && !addWhiteStroke(doc,layer,strokePixels,options.styleStroke.color))throw Error('Không áp dụng được viền chữ của style.');
             return layer;
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if(typeof previousQuotes==='boolean')app.preferences.smartQuotes=previousQuotes; }
+    }
+    // Proposals use native font probes and the same shape planner as placement.
+    // The final application verifies actual Photoshop ink bounds.
+    function suggestLayouts(doc,region,text,options){
+        var saved=doc.activeLayer,results=[],seen={},cfg={},k,i,base=0;
+        for(k in options)cfg[k]=options[k];cfg.dryRun=true;
+        text=String(text).replace(/\s+/g,' ').replace(/^\s+|\s+$/g,'');
+        var authored=typeof MTAStyles!=='undefined'?MTAStyles.prepare(options,region,text,doc.resolution).text:text;
+        authored=normalizeText(authored,'keep');
+        try{
+            for(i=0;i<7;i++){
+                cfg.lineCount=i===0?0:base+[1,-1,2,-2,3,-3][i-1];
+                if(i && (cfg.lineCount<1||cfg.lineCount>24))continue;
+                try{
+                    addText(doc,doc,region,text,cfg);
+                    var info=lastLayoutInfo;
+                    if(!info)continue;if(!i)base=info.lines;
+                    // Measure rendered capitals but keep the translator's casing in
+                    // the edit box and project. Only whitespace gains line breaks.
+                    if(authored.replace(/\s/g,'').toLowerCase()!==info.content.replace(/\s/g,'').toLowerCase())continue;
+                    var content='',at=0;
+                    for(var c=0;c<info.content.length;c++){
+                        var ch=info.content.charAt(c);
+                        if(/\s/.test(ch))content+=ch;
+                        else{while(at<authored.length&&/\s/.test(authored.charAt(at)))at++;content+=authored.charAt(at++);}
+                    }
+                    if(!seen['$'+content]){seen['$'+content]=true;results.push({text:content,size:info.size,lines:info.lines});}
+                    if(results.length===5)break;
+                }catch(e){if(!i)throw e;}
+            }
+        }finally{try{doc.activeLayer=saved;}catch(_){}}
+        return results;
     }
     function paragraphText(layer, box, size, resolution) {
         var t=layer.textItem, before=bounds(layer), content=t.contents;
@@ -556,6 +620,9 @@ var MTA = (function () {
     // Recovery placement deliberately does not promise to fit the region.
     // Preserve the whole string in a visible, movable Photoshop text layer.
     function addFallbackText(doc, group, text, options, center, name, maxWidth) {
+        if(typeof MTAStyles!=='undefined'){
+            var styled=MTAStyles.prepare(options,null,text,doc.resolution);options=styled.options;text=styled.text;
+        }
         text = normalizeText(text, options.uppercase === true ? 'upper' : (options.caseMode || 'sentence'));
         var layer = doc.artLayers.add(), previousQuotes = app.preferences.smartQuotes;
         try {
@@ -564,13 +631,14 @@ var MTA = (function () {
             var t = layer.textItem; t.kind = TextType.POINTTEXT;
             normalHorizontalText(t);
             try { t.font = options.font; } catch (_) { t.font = 'ArialMT'; }
+            t.tracking=options.tracking||0;t.fauxBold=options.fauxBold===true;t.fauxItalic=options.fauxItalic===true;
             t.justification = Justification.CENTER;
             t.size = UnitValue(Math.max(4, options.min) * 72 / doc.resolution, 'pt');
             t.contents='ẤỮộgj';var metricBounds=bounds(layer), fallbackSize=Math.max(4,options.min);
             var fallbackLead=configureLeading(t,{autoLeading:options.autoLeading,leading:readableLeading(options,(metricBounds[3]-metricBounds[1])/fallbackSize)});
             applyLeading(t,fallbackLead,fallbackSize*fallbackLead.ratio,doc.resolution);
             t.position = [UnitValue(center[0], 'px'), UnitValue(center[1], 'px')];
-            var color = new SolidColor(); color.rgb.red = 0; color.rgb.green = 0; color.rgb.blue = 0; t.color = color;
+            var rgb=options.textColor||[0,0,0],color = new SolidColor(); color.rgb.red = rgb[0]; color.rgb.green = rgb[1]; color.rgb.blue = rgb[2]; t.color = color;
             var paragraphs=String(text).replace(/\r\n|\r/g,'\n').split('\n'), output=[];
             var limit=Math.max(20,Math.min(Number(maxWidth)||doc.width.as('px')*.35,doc.width.as('px')*.8));
             for(var p=0;p<paragraphs.length;p++){
@@ -588,6 +656,7 @@ var MTA = (function () {
             layer.move(group, ElementPlacement.INSIDE);
             var fallbackBounds=bounds(layer);
             paragraphText(layer,[fallbackBounds[0]-2,fallbackBounds[1]-2,limit+4,fallbackBounds[3]-fallbackBounds[1]+fallbackSize*2],fallbackSize,doc.resolution);
+            if(options.styleStroke&&!addWhiteStroke(doc,layer,options.styleStroke.size*(options.styleScale||1),options.styleStroke.color))throw Error('Không áp dụng được viền chữ.');
             return layer;
         } catch (e) { try { layer.remove(); } catch (_) {} throw e; }
         finally { if (typeof previousQuotes === 'boolean') app.preferences.smartQuotes = previousQuotes; }
@@ -978,6 +1047,6 @@ var MTA = (function () {
         }
         return savePsd ? psd : pdf;
     }
-    return {uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, sourceRenameCandidate:sourceRenameCandidate, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
-            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
+    return {letteringSizeOptions:letteringSizeOptions, uiVersion:uiVersion, inputPolicy:inputPolicy, enginePreviewMapping:enginePreviewMapping, cleanSelection:cleanSelection, cleanControlEnabled:cleanControlEnabled, cleanRegionStatus:cleanRegionStatus, savedEngine:savedEngine, cleanResultSummary:cleanResultSummary, read: text, write: write, writeCheckpoint:writeCheckpoint, validOutput:validOutput, mkdir: mkdir, unique: unique, sourceProjectKey:sourceProjectKey, sourceRenameCandidate:sourceRenameCandidate, automaticClickAllowed:automaticClickAllowed, confirmChapter: confirmChapter, shell: shell, request: request,
+            snapshot: snapshot, translationKey: translationKey, sourceNameAllowed: sourceNameAllowed, suggestTextRole: suggestTextRole, resolveTextRole: resolveTextRole, mergeNextTranslation: mergeNextTranslation, wrapToWidths: wrapToWidths, wrapScored: wrapScored, planLayout: planLayout, suggestLayouts:suggestLayouts, normalizeQuotes: normalizeQuotes, normalizeText: normalizeText, pageSizeCap: pageSizeCap, layoutFlags: layoutFlags, finishedPages: finishedPages, lastLayout: function(){return lastLayoutInfo;}, unmappedTranslations: unmappedTranslations, shapeWidth: shapeWidth, shapeRectFits: shapeRectFits, placedLinesFit: placedLinesFit, hitRegion: hitRegion, editSafe: editSafe, validateManifest: validateManifest, bounds: bounds, addText: addText, addWhiteStroke:addWhiteStroke, addFallbackText: addFallbackText, addOverlay: addOverlay, addRegionOverlays: addRegionOverlays, findRegionLayers: findRegionLayers, saveCopy: saveCopy, pdfSaveOptions: pdfSaveOptions, configureLeading: configureLeading};
 })();
